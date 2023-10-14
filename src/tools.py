@@ -1,12 +1,8 @@
-import os
-import random
 import time
-from datetime import datetime, timedelta
-from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
+from logging import getLogger
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Final, Literal, Sequence, TypeVar
+from typing import Any, Callable, Literal, Protocol, Sequence
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -17,10 +13,12 @@ from torch.cuda.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
+from typing_extensions import TypeAlias
 
-from src.datasets import build_dataloader
+from src.dataset import build_dataloader
 from src.losses import build_criterion
 from src.models import build_model
+from src.utils import seed_everything
 
 logger = getLogger(__name__)
 
@@ -118,13 +116,18 @@ class EarlyStopping:
 class MetricsMonitor:
     def __init__(self, metrics: Sequence[str]) -> None:
         self.metrics = metrics
-        self._metrics_df = pd.DataFrame(columns=["epoch", *metrics])
+        self._metrics_df = pd.DataFrame(columns=[*metrics])
 
     def update(self, metrics: dict[str, float | int]) -> None:
-        self._metrics_df = self._metrics_df.append(metrics, ignore_index=True)
+        epoch = metrics.pop("epoch")
+        _metrics = pd.DataFrame(metrics, index=[epoch])
+        self._metrics_df = pd.concat([self._metrics_df, _metrics], axis=0)
 
-    def show(self) -> None:
-        logger.info(self._metrics_df)
+    def show(self, log_interval: int = 1) -> None:
+        loggin_metrics = self._metrics_df.iloc[
+            list(range(0, len(self._metrics_df), log_interval))
+        ]
+        logger.info(f"\n{loggin_metrics}")
 
     def plot(
         self,
@@ -149,33 +152,22 @@ class MetricsMonitor:
         self._metrics_df.to_csv(save_path, index=False)
 
 
-def seed_everything(seed: int = 42) -> None:
-    random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True  # type: ignore
-    torch.backends.cudnn.benchmark = False  # type: ignore
-    torch.autograd.anomaly_mode.set_detect_anomaly(False)
-
-
-LossFunc = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+LossFunc: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+Scheduler: TypeAlias = torch.optim.lr_scheduler._LRScheduler | CosineLRScheduler
 
 
 def train_one_epoch(
-    fold: int,
     epoch: int,
     model: nn.Module,
     dl_train: DataLoader,
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler._LRScheduler,
+    scheduler: Scheduler,
     scaler: GradScaler,
     criterion: LossFunc,
     device: torch.device,
     seed: int = 42,
     use_amp: bool = False,
-) -> dict[str, float]:
+) -> dict[str, float | int]:
     seed_everything(seed)
     model.train()
     scheduler.step(epoch)
@@ -199,6 +191,7 @@ def train_one_epoch(
             optimizer.zero_grad(set_to_none=True)
 
             losses.update(loss.item())
+            pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
     result = {
         "epoch": epoch,
@@ -208,14 +201,38 @@ def train_one_epoch(
     return result
 
 
+def create_checkpoints(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: Scheduler,
+    scaler: torch.cuda.amp.grad_scaler.GradScaler | None,
+    score: float,
+    epoch: int,
+    save_weight_only: bool = False,
+) -> dict:
+    if save_weight_only:
+        return {
+            "model_state_dict": model.state_dict(),
+        }
+    return {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict(),
+        "scaler_state_dict": scaler.state_dict() if scaler is not None else None,
+        "score": score,
+        "epoch": epoch,
+    }
+
+
 def valid_one_epoch(
-    fold: int,
     epoch: int,
     model: nn.Module,
     dl_valid: DataLoader,
     device: torch.device,
     criterion: LossFunc,
-) -> dict[str, float]:
+    seed: int = 42,
+) -> dict[str, float | int]:
+    seed_everything(seed)
     model.eval()
     losses = AverageMeter("loss")
     start_time = time.time()
@@ -232,6 +249,7 @@ def valid_one_epoch(
             loss = criterion(outs, labels)
 
             losses.update(loss.item())
+            pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
     result = {
         "epoch": epoch,
@@ -241,15 +259,54 @@ def valid_one_epoch(
     return result
 
 
-def train_one_fold(config, fold: int, debug: bool) -> None:
+class TrainConfig(Protocol):
+    seed: int
+
+    model_save_path: Path
+    metrics_save_path: Path
+    metrics_plot_path: Path
+
+    criterion_type: str
+    optimizer_params: dict[str, Any]
+    scheduler_params: dict[str, Any]
+    early_stopping_params: dict[str, Any]
+
+    use_amp: bool
+    num_epochs: int
+    batch_size: int
+    num_workers: int
+
+    early_stopping_params: dict[str, Any]
+
+    # Used in build_dataloader
+    window_size: int
+    train_series_path: str | Path
+    train_events_path: str | Path
+    test_series_path: str | Path
+
+    # Used in build_model
+    model_type: str
+    input_size: int
+    hidden_size: int
+    out_size: int
+    n_layers: int
+    bidir: bool
+
+
+def train_one_fold(
+    config: TrainConfig,
+    fold: int,
+    debug: bool,
+    train_one_epoch: Callable = train_one_epoch,
+    valid_one_epoch: Callable = valid_one_epoch,
+    log_interval: int = 1,
+) -> None:
     logger.info(f"Start training fold{fold}")
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = build_model(config).to(config.device)
+    model = build_model(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), **config.optimizer_params)
     scheduler = CosineLRScheduler(optimizer, **config.scheduler_params)
-    criterion = build_criterion(config.criterion_name)
+    criterion = build_criterion(config.criterion_type)
     dl_train = build_dataloader(config, fold, "train", debug)
     dl_valid = build_dataloader(config, fold, "valid", debug)
 
@@ -257,12 +314,11 @@ def train_one_fold(config, fold: int, debug: bool) -> None:
     early_stopping = EarlyStopping(**config.early_stopping_params)
     start_time = time.time()
 
-    metrics_monitor = MetricsMonitor(["epoch", "loss"])
+    metrics_monitor = MetricsMonitor(["train/loss", "valid/loss"])
     for epoch in range(config.num_epochs):
         seed_everything(config.seed)
         logger.info(f"Start epoch {epoch}")
         train_result = train_one_epoch(
-            fold=fold,
             epoch=epoch,
             model=model,
             dl_train=dl_train,
@@ -274,7 +330,6 @@ def train_one_fold(config, fold: int, debug: bool) -> None:
             seed=config.seed,
         )
         valid_result = valid_one_epoch(
-            fold=fold,
             epoch=epoch,
             model=model,
             dl_valid=dl_valid,
@@ -288,7 +343,8 @@ def train_one_fold(config, fold: int, debug: bool) -> None:
                 "valid/loss": valid_result["loss"],
             }
         )
-        metrics_monitor.show()
+        if epoch % log_interval == 0:
+            metrics_monitor.show(log_interval=log_interval)
 
         score = valid_result["loss"]
         early_stopping.check(score, model, config.model_save_path)
@@ -299,6 +355,7 @@ def train_one_fold(config, fold: int, debug: bool) -> None:
             break
 
     metrics_monitor.save(config.metrics_save_path, fold)
+    metrics_monitor.plot(config.metrics_plot_path, col=["train/loss", "valid/loss"])
     logger.info(
         f"Training fold{fold} is done. elapsed time: {time.time() - start_time}"
     )

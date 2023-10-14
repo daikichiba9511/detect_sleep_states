@@ -1,0 +1,46 @@
+from pathlib import Path
+
+import pandas as pd
+import polars as pl
+from sklearn.model_selection import GroupKFold
+
+from src.utils import seed_everything, timer
+
+
+class Config:
+    n_splits: int = 5
+    seed: int = 42
+
+    root_dir: Path = Path(__file__).resolve().parents[1]
+    input_dir: Path = root_dir / "input"
+    data_dir: Path = input_dir / "child-mind-institute-detect-sleep-states"
+    output_dir: Path = input_dir / "for_train"
+    output_dir.mkdir(exist_ok=True, parents=True)
+    train_series_path: str | Path = data_dir / "train_series.parquet"
+    train_events_path: str | Path = data_dir / "train_events.csv"
+    test_series_path: str | Path = data_dir / "test_series.parquet"
+
+
+@timer(logger=print)
+def make_fold(cfg, n_splits=5) -> pd.DataFrame:
+    df_series = pl.read_parquet(cfg.train_series_path)
+    df = df_series.to_pandas(use_pyarrow_extension_array=True)
+    print(df)
+
+    df["fold"] = -1
+    gkf = GroupKFold(n_splits=n_splits)
+    for fold, (_, valid_idx) in enumerate(gkf.split(df, groups=df["series_id"].values)):
+        df.loc[valid_idx, "fold"] = fold
+    df["fold"] = df["fold"].astype("int")
+    return df
+
+
+if __name__ == "__main__":
+    print("root: ", Config.root_dir)
+    print("seed: ", Config.seed)
+    seed_everything(Config.seed)
+    df = make_fold(Config, Config.n_splits)
+    print(df)
+    print(df.groupby("fold").size())
+    print(df.groupby("fold")["series_id"].nunique())
+    df.to_parquet(Config.output_dir / "train_series_fold.parquet", index=False)

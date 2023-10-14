@@ -3,3 +3,9 @@ input
 output
 weights
 wandb
+__pycache__
+*.pyc
+*.pyi
+metadata.json
+submission.csv
+
