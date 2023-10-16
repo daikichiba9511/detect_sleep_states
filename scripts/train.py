@@ -2,9 +2,11 @@ import importlib
 import pprint
 import time
 import warnings
+from functools import partial
 
 import torch
 import torch.nn as nn
+from timm.scheduler import CosineLRScheduler
 from torch.cuda.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
@@ -29,14 +31,14 @@ def train_one_epoch_v2(
     device: torch.device,
     seed: int = 42,
     use_amp: bool = False,
+    # additional params
+    max_chunk_size: int = 24 * 60 * 100,
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).train()
     scheduler.step(epoch)
     start_time = time.time()
     losses = AverageMeter("loss")
-
-    max_chunk_size = 24 * 60 * 100
 
     pbar = tqdm(
         enumerate(dl_train), total=len(dl_train), dynamic_ncols=True, leave=True
@@ -50,21 +52,31 @@ def train_one_epoch_v2(
             for start in range(0, seq_ln, max_chunk_size):
                 label = labels[start : start + max_chunk_size]
                 outs, h = model(series[start : start + max_chunk_size], h)
-                loss = criterion(outs, label)
-                h = [h_.detach() for h_ in h]
 
-                scaler.scale(loss).backward()  # type: ignore
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad(set_to_none=True)
+                # positive signalを含むときにのみ学習する
+                # ほかはコンテキストをhに入れるのに使う
+                if label.sum() > 0:
+                    loss = criterion(outs, label)
+                    h = [h_.detach() for h_ in h]
 
-                losses.update(loss.item())
-                pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
+                    scaler.scale(loss).backward()  # type: ignore
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
 
+                    losses.update(loss.item())
+                    pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
+
+    lr = (
+        scheduler._get_lr(epoch)[-1]
+        if isinstance(scheduler, CosineLRScheduler)
+        else scheduler.get_last_lr()[0]
+    )
     result = {
         "epoch": epoch,
         "loss": losses.avg,
         "elapsed_time": time.time() - start_time,
+        "lr": lr,
     }
     return result
 
@@ -76,13 +88,13 @@ def valid_one_epoch_v2(
     device: torch.device,
     criterion: LossFunc,
     seed: int = 42,
+    # additional params
+    max_chunk_size: int = 24 * 60 * 100,
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model.eval()
     losses = AverageMeter("loss")
     start_time = time.time()
-
-    max_chunk_size = 24 * 60 * 100
 
     pbar = tqdm(
         enumerate(dl_valid), total=len(dl_valid), dynamic_ncols=True, leave=True
@@ -115,6 +127,7 @@ def valid_one_epoch_v2(
 
 def main(config: str, fold: int, debug: bool) -> None:
     cfg = importlib.import_module(f"src.configs.{config}").Config
+    cfg.model_save_path = cfg.output_dir / (f"{config}_model_fold" + f"{fold}.pth")
     log_fp = cfg.output_dir / f"{config}_fold{fold}.log"
     LoggingUtils.add_file_handler(LOGGER, log_fp)
 
@@ -125,8 +138,12 @@ def main(config: str, fold: int, debug: bool) -> None:
         cfg,
         fold,
         debug,
-        train_one_epoch=train_one_epoch_v2,
-        valid_one_epoch=valid_one_epoch_v2,
+        train_one_epoch=partial(
+            train_one_epoch_v2, max_chunk_size=cfg.train_max_chunk_size
+        ),
+        valid_one_epoch=partial(
+            valid_one_epoch_v2, max_chunk_size=cfg.infer_max_chunk_size
+        ),
     )
 
 

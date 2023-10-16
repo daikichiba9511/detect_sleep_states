@@ -144,6 +144,7 @@ class MetricsMonitor:
             data = self._metrics_df[c].to_numpy()
             ax.plot(data, label=c)
         ax.set_xlabel("epoch")
+        ax.set_ylabel(",".join(col))
         ax.legend()
         fig.savefig(save_path)
 
@@ -193,10 +194,16 @@ def train_one_epoch(
             losses.update(loss.item())
             pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
+    lr = (
+        scheduler._get_lr(epoch)[-1]
+        if isinstance(scheduler, CosineLRScheduler)
+        else scheduler.get_last_lr()[0]
+    )
     result = {
         "epoch": epoch,
         "loss": losses.avg,
         "elapsed_time": time.time() - start_time,
+        "lr": lr,
     }
     return result
 
@@ -304,7 +311,23 @@ def train_one_fold(
     logger.info(f"Start training fold{fold}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(config).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), **config.optimizer_params)
+
+    model_params = list(model.named_parameters())
+    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
+    model_params = [
+        {
+            "params": [
+                p for n, p in model_params if not any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": config.optimizer_params["weight_decay"],
+        },
+        {
+            "params": [p for n, p in model_params if any(nd in n for nd in no_decay)],
+            "weight_decay": 0.0,
+        },
+    ]
+    optimizer = torch.optim.AdamW(model_params, lr=config.optimizer_params["lr"])
+
     scheduler = CosineLRScheduler(optimizer, **config.scheduler_params)
     criterion = build_criterion(config.criterion_type)
     dl_train = build_dataloader(config, fold, "train", debug)
@@ -314,7 +337,7 @@ def train_one_fold(
     early_stopping = EarlyStopping(**config.early_stopping_params)
     start_time = time.time()
 
-    metrics_monitor = MetricsMonitor(["train/loss", "valid/loss"])
+    metrics_monitor = MetricsMonitor(["train/loss", "valid/loss", "lr"])
     for epoch in range(config.num_epochs):
         seed_everything(config.seed)
         logger.info(f"Start epoch {epoch}")
@@ -335,10 +358,12 @@ def train_one_fold(
             dl_valid=dl_valid,
             device=device,
             criterion=criterion,
+            seed=config.seed,
         )
         metrics_monitor.update(
             {
                 "epoch": epoch,
+                "lr": train_result["lr"],
                 "train/loss": train_result["loss"],
                 "valid/loss": valid_result["loss"],
             }
@@ -356,6 +381,9 @@ def train_one_fold(
 
     metrics_monitor.save(config.metrics_save_path, fold)
     metrics_monitor.plot(config.metrics_plot_path, col=["train/loss", "valid/loss"])
+    metrics_monitor.plot(config.metrics_save_path.parent / "lr.png", col=["lr"])
+
+    elapsed_time = time.time() - start_time
     logger.info(
-        f"Training fold{fold} is done. elapsed time: {time.time() - start_time}"
+        f"Training fold{fold} is done. elapsed time: {elapsed_time:.2f}[sec]/{elapsed_time / 60:.2f}[min]/{elapsed_time / 3660:.2f}[hour]"
     )

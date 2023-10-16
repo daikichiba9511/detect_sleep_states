@@ -18,7 +18,6 @@ from src.tools import AverageMeter
 logger = getLogger(__name__)
 
 
-# TODO: implement
 class Runner:
     def __init__(
         self, config, dataconfig, is_val: bool = False, device: str = "cuda"
@@ -29,6 +28,7 @@ class Runner:
         self.device = torch.device(device)
 
     def _init_dl(self, debug: bool = False, fold: int = 0) -> DataLoader:
+        print("Debug mode:", debug)
         if self.is_val:
             dl = build_dataloader(self.dataconfig, fold, "valid", debug)
             return dl
@@ -75,10 +75,10 @@ class Runner:
             else:
                 labels = None
 
+            seq_ln = series.shape[0]
+            h = None
+            preds = torch.zeros((len(series), self.config.out_size))
             with torch.inference_mode():
-                seq_ln = series.shape[0]
-                h = None
-                preds = torch.zeros((len(series), self.config.out_size))
                 for start in range(0, seq_ln, max_chunk_size):
                     outs, h = model(series[start : start + max_chunk_size], h)
                     h = [h_.detach() for h_ in h]
@@ -97,40 +97,42 @@ class Runner:
                         pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
             series_id = series_ids[batch_idx]
-            preds = preds.cpu().softmax(dim=1).numpy()
-            days = len(series) / (17280 / 12)
+            preds = preds.cpu().float()
+            preds = preds.softmax(1)
+            # print(preds)
+            preds = preds[:, 1:]
+            # preds[:, 0] = torch.sigmoid(preds[:, 0])
+            # preds[:, 1] = torch.sigmoid(preds[:, 1])
+            preds = preds.numpy()
+            days = len(preds) / (17280 / 12)
             score0 = np.zeros(len(preds), dtype=np.float16)
             score1 = np.zeros(len(preds), dtype=np.float16)
             for p_idx in range(len(preds)):
                 pred_i_0 = preds[p_idx, 0]
                 pred_i_1 = preds[p_idx, 1]
-                pred_interval_0 = max(
-                    preds[max(0, p_idx - min_interval) : p_idx + min_interval, 0]
-                )
-                pred_interval_1 = max(
-                    preds[max(0, p_idx - min_interval) : p_idx + min_interval, 0]
-                )
+                start_interval = max(0, p_idx - min_interval)
+                end_interval = p_idx + min_interval
+                pred_interval = preds[start_interval:end_interval]
+                pred_interval_0 = max(pred_interval[:, 0])
+                pred_interval_1 = max(pred_interval[:, 1])
                 if pred_i_0 == pred_interval_0:
-                    score0[p_idx] = pred_i_0
+                    score0[p_idx] = pred_interval_0
                 if pred_i_1 == pred_interval_1:
-                    score1[p_idx] = pred_i_1
-            candidates_onset = np.argsort(score0)[-max(1, round(days))]
-            candidates_wakeup = np.argsort(score1)[-max(1, round(days))]
-            onset = (
-                dfs[batch_idx][["step"]]
-                .iloc[np.clip(candidates_onset * 12, 0, len(dfs) - 1)]
-                .astype(np.int32)
-            )
+                    score1[p_idx] = pred_interval_1
+            candidates_onset = np.argsort(score0)[-max(1, round(days)) :]
+            candidates_wakeup = np.argsort(score1)[-max(1, round(days)) :]
+            steps = dfs[batch_idx][["step"]]
+
+            onset_idx = np.clip(candidates_onset * 12, 0, len(dfs[batch_idx]) - 1)
+            onset = steps.iloc[onset_idx].astype(np.int32)
             if not isinstance(onset, pd.DataFrame):
                 onset = onset.to_frame().T
             onset["event"] = "onset"
             onset["series_id"] = series_id
             onset["score"] = score0[candidates_onset]
-            wakeup = (
-                dfs[batch_idx][["step"]]
-                .iloc[np.clip(candidates_wakeup * 12, 0, len(dfs) - 1)]
-                .astype(np.int32)
-            )
+
+            wakeup_idx = np.clip(candidates_wakeup * 12, 0, len(dfs[batch_idx]) - 1)
+            wakeup = steps.iloc[wakeup_idx].astype(np.int32)
             if not isinstance(wakeup, pd.DataFrame):
                 wakeup = wakeup.to_frame().T
             wakeup["event"] = "wakeup"
@@ -145,6 +147,7 @@ class Runner:
         submission["row_id"] = submission.index.astype(int)
         submission["score"] = submission["score"].fillna(submission["score"].mean())
         submission = submission[["row_id", "series_id", "step", "event", "score"]]
+
         if self.is_val and losses is not None:
             logger.info(f"fold: {fold}, loss: {losses.avg:.5f}")
         return submission

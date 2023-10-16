@@ -56,3 +56,15 @@ print(df_train_series.filter(pl.col("series_id") == "038441c925bb"))
 print(
     df_train_events.filter(pl.col("step").is_null())["series_id"].n_unique()
 )  # -> 240
+
+print(df_train_events.group_by("event").count())
+
+print(
+    f"""
+    {df_train_series["step"].min() = }
+    {df_train_series["step"].max() = }
+    {df_train_series["step"].mean() = }
+    {df_train_series["step"].std() = }
+    {df_train_series["step"].median() = }
+    """
+)

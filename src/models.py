@@ -2,6 +2,7 @@ from typing import Protocol
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class ResidualBiGRU(nn.Module):
@@ -43,7 +44,14 @@ class ResidualBiGRU(nn.Module):
 
 
 class MultiResidualBiGRU(nn.Module):
-    def __init__(self, input_size, hidden_size, out_size, n_layers, bidir=True):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        out_size: int,
+        n_layers: int,
+        bidir: bool = True,
+    ) -> None:
         super(MultiResidualBiGRU, self).__init__()
 
         self.input_size = input_size
@@ -61,7 +69,7 @@ class MultiResidualBiGRU(nn.Module):
         )
         self.fc_out = nn.Linear(hidden_size, out_size)
 
-    def forward(self, x, h=None):
+    def forward(self, x: torch.Tensor, h=None) -> tuple[torch.Tensor, list]:
         # if we are at the beginning of a sequence (no hidden state)
         if h is None:
             # (re)initialize the hidden state
@@ -77,7 +85,7 @@ class MultiResidualBiGRU(nn.Module):
             new_h.append(new_hi)
 
         x = self.fc_out(x)
-        #         x = F.normalize(x,dim=0)
+        # x = F.normalize(x, dim=0)  # 系列の中でどのtime_stepがonset,wakeupそれぞれ一番確率が大きいか
         return x, new_h  # log probabilities + hidden states
 
 

@@ -10,6 +10,8 @@ from tqdm.auto import tqdm
 
 from src.utils import seed_everything
 
+pl.Config.set_tbl_cols(n=300)
+
 
 class SleepDataset(Dataset):
     """
@@ -26,13 +28,13 @@ class SleepDataset(Dataset):
     ):
         self.phase = phase
         self.window_size = window_size
-        self.series = series
+        self.series = series.reset_index()
         self.series_ids = series_ids
         self.data = []
 
         for viz_id in tqdm(self.series_ids, desc="Loading data"):
             self.data.append(
-                series.loc[(series.series_id == viz_id)].copy().reset_index(drop=True)
+                self.series.loc[(self.series.series_id == viz_id)].copy().reset_index()
             )
 
     def downsample_seq_generate_features(self, feat, window_size: int):
@@ -68,7 +70,7 @@ class SleepDataset(Dataset):
                 )
                 for i in range(X.shape[1])
             ],
-            -1,
+            axis=-1,
         )
         X = torch.from_numpy(X)
         if self.phase == "test":
@@ -82,9 +84,15 @@ class SleepDataset(Dataset):
         y = y.reshape(-1, self.window_size)
         # NOTE: window_size内に1,2がおきると変になるかも
         y = y.max(1)
-        y = np.eye(3)[y.astype(np.int32)][:, 1:]
+        y = np.eye(3)[y.astype(np.int32)]
+        # y = y[:, 1:]
         y = torch.from_numpy(y)
         return X, y
+
+
+def cleaning(data: pl.DataFrame) -> pl.DataFrame:
+    data = data.drop_nulls(subset=["timestamp"])
+    return data
 
 
 class DataloaderConfig(Protocol):
@@ -130,6 +138,7 @@ def build_dataloader(
         return dl_test
 
     elif phase == "valid":
+        print("######### Valid ###########")
         valid_series = pl.read_parquet(config.train_series_path)
         if debug:
             valid_series = valid_series.sample(n=10000)
@@ -138,8 +147,11 @@ def build_dataloader(
         valid_events = pl.read_csv(config.train_events_path, dtypes={"step": pl.Int64})
         df_valid = valid_series.join(valid_events, on=["series_id", "step"], how="left")
         df_valid = df_valid.with_columns(
-            pl.col("event").map_dict({"onset": 1, "wakeup": 2}).fill_null(0)
+            pl.col("event").map_dict({"onset": 1, "wakeup": 2, None: 0})
         )
+        print("Before: ", len(df_valid))
+        df_valid = cleaning(df_valid)
+        print("After: ", len(df_valid))
         ds_valid = SleepDataset(
             "valid",
             df_valid["series_id"].unique(),
@@ -158,8 +170,8 @@ def build_dataloader(
         return dl_valid
 
     else:
+        print("######### Train ###########")
         train_series = pl.read_parquet(config.train_series_path)
-
         if debug:
             train_series = train_series.sample(n=10000)
         train_series = train_series.filter(pl.col("fold") != fold)
@@ -167,8 +179,11 @@ def build_dataloader(
         train_events = pl.read_csv(config.train_events_path, dtypes={"step": pl.Int64})
         df_train = train_series.join(train_events, on=["series_id", "step"], how="left")
         df_train = df_train.with_columns(
-            pl.col("event").map_dict({"onset": 1, "wakeup": 2}).fill_null(0)
+            pl.col("event").map_dict({"onset": 1, "wakeup": 2, None: 0})
         )
+        print("Before: ", len(df_train))
+        df_train = cleaning(df_train)
+        print("After: ", len(df_train))
         print(df_train)
         ds_train = SleepDataset(
             "train",
@@ -287,6 +302,22 @@ def test_build_dl():
     print(batch[1])
     print([b.shape for b in batch[1]])
     assert isinstance(dl, DataLoader)
+
+    dl = build_dataloader(config, 0, "train", debug=False)
+    cnt = dict()
+    for b in dl:
+        # shape: (ln, 2)
+        label: list[torch.Tensor] = b[1]
+        for l in label:
+            print(l)
+            for li in l:
+                if sum(li) == 0:
+                    cnt[0] = cnt.get(0, 0) + 1
+                else:
+                    idx = int(li.argmax()) + 1
+                    cnt[idx] = cnt.get(idx, 0) + 1
+    print(cnt)
+
     print("build_dataloader test passed")
 
 
