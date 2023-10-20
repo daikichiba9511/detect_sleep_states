@@ -12,7 +12,12 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold
-from src.utils import LoggingUtils, get_class_vars, seed_everything
+from src.utils import (
+    LoggingUtils,
+    get_class_vars,
+    seed_everything,
+    get_commit_head_hash,
+)
 
 warnings.filterwarnings("ignore")
 INFO = 20
@@ -66,7 +71,7 @@ def train_one_epoch_v2(
                 #     output[input_data_mask_array == 1],
                 #     y[input_data_mask_array == 1],
                 # )
-                margin = 1
+                margin = 5
                 onset_use_index = y[input_data_mask_array == 1][..., 1] != 0
                 true_indecies = torch.nonzero(onset_use_index)
                 for idx in true_indecies:
@@ -195,8 +200,10 @@ def main(config: str, fold: int, debug: bool) -> None:
     cfg.model_save_path = cfg.output_dir / (cfg.model_save_name + f"{fold}.pth")
     log_fp = cfg.output_dir / f"{config}_fold{fold}.log"
     LoggingUtils.add_file_handler(LOGGER, log_fp)
+    commit_hash = get_commit_head_hash()
 
     cfg_map = get_class_vars(cfg)
+    LOGGER.info(f"fold: {fold}, debug: {debug}, commit_hash: {commit_hash}")
     LOGGER.info(f"Fold: {fold}\n {pprint.pformat(cfg_map)}")
     train_one_fold(cfg, fold, debug, train_one_epoch_v2, valid_one_epoch_v2)
     LOGGER.info(f"Fold {fold} training has finished.")

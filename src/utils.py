@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
 from typing import Any, ClassVar
+import subprocess
 
 import numpy as np
 import torch
@@ -78,3 +79,13 @@ def timer(name, log_fn=logger.info):
     t0 = time.time()
     yield
     log_fn(f"[{name}] done in {time.time() - t0:.3f} s")
+
+
+def get_commit_head_hash() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], stdout=subprocess.PIPE, check=True
+    ).stdout.decode("utf-8")[:-1]
+
+
+if __name__ == "__main__":
+    print(get_commit_head_hash())
