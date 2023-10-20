@@ -1,6 +1,7 @@
 import os
 import random
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import wraps
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
@@ -57,7 +58,7 @@ def get_class_vars(cls_obj: object) -> dict[str, Any]:
     return {k: v for k, v in cls_obj.__dict__.items() if not k.startswith("__")}
 
 
-def timer(logger=logger.info):
+def measure_fn(logger=logger.info):
     def _timer(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -70,3 +71,10 @@ def timer(logger=logger.info):
         return wrapper
 
     return _timer
+
+
+@contextmanager
+def timer(name, log_fn=logger.info):
+    t0 = time.time()
+    yield
+    log_fn(f"[{name}] done in {time.time() - t0:.3f} s")

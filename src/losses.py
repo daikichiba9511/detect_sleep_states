@@ -21,15 +21,15 @@ def bce_with_weighted_postive(
     loss = torch.nn.functional.binary_cross_entropy_with_logits(
         logits, targets, reduction="none"
     )
-    if targets.shape[1] != 3:
-        raise ValueError(f"Expected targets.shape[1] == 3, got {targets.shape[1]}")
-    loss_onset = loss[targets[:, 1] == 1].nanmean()
+    if targets.shape[-1] != 3:
+        raise ValueError(f"Expected targets.shape[-1] == 3, got {targets.shape[1]}")
+    loss_onset = loss[targets[..., 1] == 1].nanmean(1).nanmean()
     if loss_onset.isnan():
         loss_onset = torch.tensor(0.0, device=logits.device)
-    loss_wakeup = loss[targets[:, 2] == 1].nanmean()
+    loss_wakeup = loss[targets[..., 2] == 1].nanmean(1).nanmean()
     if loss_wakeup.isnan():
         loss_wakeup = torch.tensor(0.0, device=logits.device)
-    loss_non_event = loss[targets[:, 0] == 1].nanmean()
+    loss_non_event = loss[targets[..., 0] == 1].nanmean(1).nanmean()
 
     # w_i = 1 / (freq_in_targets) to address class imbalance
     #  shape: (2, 2)
@@ -50,15 +50,16 @@ def bce_with_weighted_postive(
         w_non_event = 1 / ((num_series - (num_wakeup + num_onset)) / num_series)
     else:
         w_onset, w_wakeup, w_non_event = weights
-    loss = w_onset * loss_onset + w_wakeup * loss_wakeup + w_non_event * loss_non_event
+    loss = w_onset * loss_onset
+    loss += w_wakeup * loss_wakeup
+    loss += w_non_event * loss_non_event
     return loss
 
 
 def build_criterion(criterion_type: str) -> Callable:
     if criterion_type == "BCEWithLogitsLoss":
         return torch.nn.BCEWithLogitsLoss()
-    elif criterion_type == "BCEWithLogitsLossPositiveOnly":
-        # return bce_with_postive_only
+    elif criterion_type == "BCEWithLogitsLossWeightedPos":
         return partial(bce_with_weighted_postive, weights=(0.8, 0.8, 0.2))
     else:
         raise NotImplementedError

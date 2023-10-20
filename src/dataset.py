@@ -7,7 +7,9 @@ import polars as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
+import json
 
+from src.fe import make_sequence_chunks
 from src.utils import seed_everything
 
 pl.Config.set_tbl_cols(n=300)
@@ -61,7 +63,6 @@ class SleepDataset(Dataset):
 
     def __getitem__(self, index):
         row = self.data[index]
-
         X = row[["anglez", "enmo"]].to_numpy().astype(np.float32)
         X = np.concatenate(
             [
@@ -204,6 +205,352 @@ def build_dataloader(
         return dl_train
 
 
+def preprcess(num_array: np.ndarray, mask_array: np.ndarray) -> dict[str, np.ndarray]:
+    attention_mask = mask_array == 0
+    return {
+        "input_data_num_array": num_array,
+        "input_data_mask_array": mask_array,
+        "attention_mask": attention_mask,
+    }
+
+
+class SleepDatasetV2(Dataset):
+    """
+    Ref:
+        https://www.kaggle.com/code/werus23/child-sleep-critical-point-regression
+    """
+
+    def __init__(
+        self,
+        phase: str,
+        num_array: np.ndarray,
+        mask_array: np.ndarray,
+        time_array: np.ndarray,
+        pred_use_array: np.ndarray,
+        series_ids_array: np.ndarray,
+        y: np.ndarray | None = None,
+    ):
+        if phase not in ["train", "valid", "test"]:
+            raise NotImplementedError
+        if phase in ["train", "valid"] and y is None:
+            raise ValueError("y must be not None when phase is train or valid")
+
+        self.phase = phase
+        self.num_array = num_array
+        self.mask_array = mask_array
+        self.time_array = time_array
+        self.pred_use_array = pred_use_array
+        self.series_ids_array = series_ids_array
+        self.y = y
+
+    def __len__(self):
+        return len(self.num_array)
+
+    def __getitem__(self, index) -> dict[str, torch.Tensor | np.ndarray]:
+        data = preprcess(self.num_array[index], self.mask_array[index])
+        if self.phase == "test":
+            return {
+                "input_data_num_array": torch.tensor(
+                    data["input_data_num_array"], dtype=torch.float32
+                ),
+                "input_data_mask_array": torch.tensor(
+                    data["input_data_mask_array"], dtype=torch.long
+                ),
+                "attention_mask": torch.tensor(
+                    data["attention_mask"], dtype=torch.float32
+                ),
+                "steps": torch.tensor(self.time_array[index], dtype=torch.long),
+                "pred_use_array": torch.tensor(
+                    self.pred_use_array[index], dtype=torch.long
+                ),
+                "series_ids": self.series_ids_array[index],
+            }
+        assert isinstance(self.y, np.ndarray)
+        return {
+            "input_data_num_array": torch.tensor(
+                data["input_data_num_array"], dtype=torch.float32
+            ),
+            "input_data_mask_array": torch.tensor(
+                data["input_data_mask_array"], dtype=torch.long
+            ),
+            "attention_mask": torch.tensor(data["attention_mask"], dtype=torch.float32),
+            "y": torch.tensor(self.y[index], dtype=torch.float32),
+            "steps": torch.tensor(self.time_array[index], dtype=torch.long),
+            "pred_use_array": torch.tensor(
+                self.pred_use_array[index], dtype=torch.long
+            ),
+            "series_ids": self.series_ids_array[index],
+        }
+
+
+def filtering(
+    num_array: np.ndarray,
+    mask_array: np.ndarray,
+    pred_use_array: np.ndarray,
+    target_array: np.ndarray,
+    time_array: np.ndarray,
+):
+    filtered_num_array = []
+    filtered_mask_array = []
+    filtered_pred_use_array = []
+    filtered_target_array = []
+    filtered_time_array = []
+    for i in range(len(num_array)):
+        num = num_array[i]
+        mask = mask_array[i]
+        pred_use = pred_use_array[i]
+        target = target_array[i]  # (seq_len, 1)
+        time = time_array[i]
+
+        # target.sum == 0はonset/wakeupが一つもないことを意味する
+        if target.sum() != 0:
+            filtered_num_array.append(num)
+            filtered_mask_array.append(mask)
+            filtered_pred_use_array.append(pred_use)
+            filtered_target_array.append(target)
+            filtered_time_array.append(time)
+    filtered_num_array = np.stack(filtered_num_array, axis=0)
+    filtered_mask_array = np.stack(filtered_mask_array, axis=0)
+    filtered_pred_use_array = np.stack(filtered_pred_use_array, axis=0)
+    filtered_target_array = np.stack(filtered_target_array, axis=0)
+    filtered_time_array = np.stack(filtered_time_array, axis=0)
+    return (
+        filtered_num_array,
+        filtered_mask_array,
+        filtered_pred_use_array,
+        filtered_target_array,
+        filtered_time_array,
+    )
+
+
+class DataloaderConfigV2(Protocol):
+    seed: int
+
+    train_series_path: str | Path
+    train_events_path: str | Path
+    test_series_path: str | Path
+
+    mask_array_path: Path
+    num_array_path: Path
+    pred_use_array_path: Path
+    series_ids_array_path: Path
+    target_array_path: Path
+    time_array_path: Path
+
+    seq_len: int
+    shift_size: int
+    offset_size: int
+
+    batch_size: int
+    num_workers: int
+
+    window_size: int
+    out_size: int
+
+
+def build_dataloader_v2(
+    config: DataloaderConfigV2,
+    fold: int,
+    phase: str,
+    debug: bool,
+    use_cache: bool = True,
+) -> DataLoader:
+    if phase not in ["train", "valid", "test"]:
+        raise NotImplementedError
+
+    def collate_fn(data):
+        batch = tuple(zip(*data))
+        return batch
+
+    num_workers = 2 if debug else config.num_workers
+    if phase == "test":
+        test_series = pl.read_parquet(config.test_series_path)
+
+        data = make_sequence_chunks(
+            test_series,
+            seq_len=config.seq_len,
+            shift_size=config.shift_size,
+            offset_size=config.offset_size,
+            normalize_type="robust",
+            make_label=False,
+        )
+
+        ds_test = SleepDatasetV2(
+            "test",
+            num_array=data["num_array"],
+            mask_array=data["mask_array"],
+            time_array=data["time_array"],
+            pred_use_array=data["pred_use_array"],
+            series_ids_array=data["series_ids_array"],
+        )
+        dl_test = DataLoader(
+            ds_test,
+            batch_size=1,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+            drop_last=False,
+            # collate_fn=collate_fn,
+        )
+        return dl_test
+
+    elif phase == "valid":
+        print("######### Valid ###########")
+        valid_series = pl.read_parquet(config.train_series_path)
+        if debug:
+            valid_series = valid_series.sample(n=10000)
+        valid_series = valid_series.filter(pl.col("fold") == fold)
+        valid_series_ids = valid_series["series_id"].unique().to_list()
+
+        # print(valid_series_ids)
+
+        valid_id_mask = np.isin(np.load(config.series_ids_array_path), valid_series_ids)
+
+        if use_cache:
+            num_array = np.load(config.num_array_path)[valid_id_mask]
+            mask_array = np.load(config.mask_array_path)[valid_id_mask]
+            target_array = np.load(config.target_array_path)[valid_id_mask].astype(
+                np.int32
+            )
+            time_array = np.load(config.time_array_path)[valid_id_mask]
+            pred_use_array = np.load(config.pred_use_array_path)[valid_id_mask]
+            series_ids_array = np.load(config.series_ids_array_path)[valid_id_mask]
+        else:
+            print("############## Make sequence chunks ##############")
+            df_events = pl.read_csv(config.train_events_path)
+            df_events = df_events.cast({"step": pl.Int64})
+            valid_series = valid_series.cast({"step": pl.Int64})
+            valid_series = valid_series.join(
+                df_events, on=["series_id", "step"], how="left"
+            )
+
+            series_ids = valid_series["series_id"].unique().to_list()
+            num_array = []
+            target_array = []
+            mask_array = []
+            pred_use_array = []
+            series_ids_array = []
+            time_array = []
+            for series_id in series_ids:
+                df_series_sid = valid_series.filter(pl.col("series_id") == series_id)
+                seq_chunks = make_sequence_chunks(
+                    df_series_sid,
+                    seq_len=config.seq_len,
+                    shift_size=config.shift_size,
+                    offset_size=config.offset_size,
+                    normalize_type="robust",
+                )
+
+                series_ids_array.append([series_id] * seq_chunks["batch_size"])
+                num_array.append(seq_chunks["num_array"])
+                target_array.append(seq_chunks["target_array"])
+                mask_array.append(seq_chunks["mask_array"])
+                pred_use_array.append(seq_chunks["pred_use_array"])
+                time_array.append(seq_chunks["time_array"])
+
+            num_array = np.concatenate(num_array, axis=0)
+            target_array = np.concatenate(target_array, axis=0)
+            mask_array = np.concatenate(mask_array, axis=0)
+            pred_use_array = np.concatenate(pred_use_array, axis=0)
+            series_ids_array = np.concatenate(series_ids_array, axis=0)
+            time_array = np.concatenate(time_array, axis=0)
+
+        print(np.unique(series_ids_array))
+
+        target_array = target_array.astype(int)
+        y = []
+        for i in range(len(target_array)):
+            target_ = target_array[i]
+            onehot = np.zeros((len(target_), config.out_size))
+            onehot[np.arange(len(target_)), target_[:, 0]] = 1
+            y.append(onehot)
+        y = np.concatenate(y, axis=0).reshape(-1, num_array.shape[1], config.out_size)
+
+        ds_valid = SleepDatasetV2(
+            "valid",
+            num_array=num_array,
+            mask_array=mask_array,
+            time_array=time_array,
+            pred_use_array=pred_use_array,
+            series_ids_array=series_ids_array,
+            y=y,
+        )
+        dl_valid = DataLoader(
+            ds_valid,
+            batch_size=config.batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+            drop_last=False,
+            # collate_fn=collate_fn,
+        )
+        return dl_valid
+
+    else:
+        # TODO: foldのseries_idを知るのをもっと効率よくする
+        print("######### Train ###########")
+        train_series = pl.read_parquet(config.train_series_path)
+        if debug:
+            train_series = train_series.sample(n=10000)
+        train_series = train_series.filter(pl.col("fold") != fold)
+        train_series_ids = train_series["series_id"].unique().to_list()
+
+        # with Path("./output/series/series_id_null_label.json").open("r") as fp:
+        #     series_id_null_label = json.load(fp)
+        # not_null_series_ids = series_id_null_label["not_have_null"]
+        # assert len(not_null_series_ids) == 37
+        # train_series_ids = [
+        #     sid for sid in train_series_ids if sid in not_null_series_ids
+        # ]
+        print(
+            "length of train series don't have null step event", len(train_series_ids)
+        )
+
+        train_id_mask = np.isin(np.load(config.series_ids_array_path), train_series_ids)
+
+        num_array = np.load(config.num_array_path)[train_id_mask]
+        mask_array = np.load(config.mask_array_path)[train_id_mask]
+        target_array = np.load(config.target_array_path)[train_id_mask].astype(np.int32)
+        time_array = np.load(config.time_array_path)[train_id_mask]
+        pred_use_array = np.load(config.pred_use_array_path)[train_id_mask]
+        series_ids_array = np.load(config.series_ids_array_path)[train_id_mask]
+
+        print("Filter Before: ", num_array.shape)
+        num_array, mask_array, pred_use_array, target_array, time_array = filtering(
+            num_array, mask_array, pred_use_array, target_array, time_array
+        )
+        print("Filter After: ", num_array.shape)
+
+        y = []
+        for i in range(len(target_array)):
+            target_ = target_array[i]
+            onehot = np.zeros((len(target_), config.out_size))
+            onehot[np.arange(len(target_)), target_[:, 0]] = 1
+            y.append(onehot)
+        y = np.concatenate(y, axis=0).reshape(-1, num_array.shape[1], config.out_size)
+
+        ds_train = SleepDatasetV2(
+            "train",
+            num_array=num_array,
+            mask_array=mask_array,
+            time_array=time_array,
+            pred_use_array=pred_use_array,
+            series_ids_array=series_ids_array,
+            y=y,
+        )
+        dl_train = DataLoader(
+            ds_train,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=config.num_workers,
+            pin_memory=True,
+            drop_last=True,
+            worker_init_fn=lambda _: seed_everything(config.seed),
+            # collate_fn=collate_fn,
+        )
+        return dl_train
+
+
 def test_ds():
     import collections
 
@@ -321,7 +668,73 @@ def test_build_dl():
     print("build_dataloader test passed")
 
 
+def test_build_dl_v2():
+    class Config:
+        seed: int = 42
+        batch_size = 32
+        num_workers = 0
+        # Used in build_dataloader
+        window_size: int = 10
+        root_dir: Path = Path(".")
+        input_dir: Path = root_dir / "input"
+        data_dir: Path = input_dir / "child-mind-institute-detect-sleep-states"
+        train_series_path: str | Path = (
+            input_dir / "for_train" / "train_series_fold.parquet"
+        )
+        train_events_path: str | Path = data_dir / "train_events.csv"
+        test_series_path: str | Path = data_dir / "test_series.parquet"
+
+        normalize_type: str = "robust"
+        seq_len: int = 1000
+        offset_size: int = 250
+        shift_size: int = 500
+
+        out_size: int = 3
+
+        fe_dir: Path = Path("./output/fe_exp000")
+        num_array_path: Path = fe_dir / "num_array.npy"
+        target_array_path: Path = fe_dir / "target_array.npy"
+        mask_array_path: Path = fe_dir / "mask_array.npy"
+        pred_use_array_path: Path = fe_dir / "pred_use_array.npy"
+        series_ids_array_path: Path = fe_dir / "series_ids_array.npy"
+        time_array_path: Path = fe_dir / "time_array.npy"
+
+    dl = build_dataloader_v2(Config, 0, "train", debug=True)
+    # dl = build_dataloader_v2(Config, 0, "valid", debug=True)
+    assert isinstance(dl, DataLoader)
+    print(len(dl))
+    batch = next(iter(dl))
+    print(type(batch))
+    print(len(batch))
+    print(batch.keys())
+
+    print(type(batch["input_data_num_array"]))
+    print(len(batch["input_data_num_array"]))
+    print(type(batch["input_data_mask_array"]))
+    print(len(batch["input_data_mask_array"]))
+    print(type(batch["attention_mask"]))
+    print(len(batch["attention_mask"]))
+    print(type(batch["y"]))
+    print(len(batch["y"]))
+    print(batch["y"].shape)
+
+    print(type(batch["steps"]))
+    print(batch["steps"].shape)
+    print(batch["steps"][:5])
+
+    print(type(batch["pred_use_array"]))
+    print(batch["pred_use_array"].shape)
+    print(batch["pred_use_array"][:5])
+
+    print(type(batch["series_ids"]))
+    print(len(batch["series_ids"]))
+    print(batch["series_ids"][:5])
+
+    print("build_dataloader test passed")
+
+
 if __name__ == "__main__":
     # test_ds()
     # test_ds2()
-    test_build_dl()
+    # test_build_dl()
+    test_build_dl_v2()

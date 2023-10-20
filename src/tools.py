@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from typing_extensions import TypeAlias
 
-from src.dataset import build_dataloader
+from src.dataset import build_dataloader_v2
 from src.losses import build_criterion
 from src.models import build_model
 from src.utils import seed_everything
@@ -231,6 +231,15 @@ def create_checkpoints(
     }
 
 
+def get_lr(scheduler: Scheduler, epoch: int) -> float:
+    lr = (
+        scheduler._get_lr(epoch)[-1]
+        if isinstance(scheduler, CosineLRScheduler)
+        else scheduler.get_last_lr()[0]
+    )
+    return lr
+
+
 def valid_one_epoch(
     epoch: int,
     model: nn.Module,
@@ -267,7 +276,9 @@ def valid_one_epoch(
 
 
 class TrainConfig(Protocol):
+    name: str
     seed: int
+    output_dir: Path
 
     model_save_path: Path
     metrics_save_path: Path
@@ -291,10 +302,23 @@ class TrainConfig(Protocol):
     train_events_path: str | Path
     test_series_path: str | Path
 
+    mask_array_path: Path
+    num_array_path: Path
+    pred_use_array_path: Path
+    series_ids_array_path: Path
+    target_array_path: Path
+    time_array_path: Path
+
+    seq_len: int
+    shift_size: int
+    offset_size: int
+
     # Used in build_model
     model_type: str
     input_size: int
     hidden_size: int
+    model_size: int
+    linear_out: int
     out_size: int
     n_layers: int
     bidir: bool
@@ -330,14 +354,24 @@ def train_one_fold(
 
     scheduler = CosineLRScheduler(optimizer, **config.scheduler_params)
     criterion = build_criterion(config.criterion_type)
-    dl_train = build_dataloader(config, fold, "train", debug)
-    dl_valid = build_dataloader(config, fold, "valid", debug)
+    dl_train = build_dataloader_v2(config, fold, "train", debug)
+    dl_valid = build_dataloader_v2(config, fold, "valid", debug)
 
     scaler = GradScaler(enabled=config.use_amp)
     early_stopping = EarlyStopping(**config.early_stopping_params)
     start_time = time.time()
 
-    metrics_monitor = MetricsMonitor(["train/loss", "valid/loss", "lr"])
+    metrics_monitor = MetricsMonitor(
+        [
+            "train/loss",
+            "valid/loss",
+            "lr",
+            "valid/onset_loss",
+            "valid/wakeup_loss",
+            "valid/onset_pos_only_loss",
+            "valid/wakeup_pos_only_loss",
+        ]
+    )
     for epoch in range(config.num_epochs):
         seed_everything(config.seed)
         logger.info(f"Start epoch {epoch}")
@@ -366,12 +400,19 @@ def train_one_fold(
                 "lr": train_result["lr"],
                 "train/loss": train_result["loss"],
                 "valid/loss": valid_result["loss"],
+                "valid/onset_loss": valid_result["onset_loss"],
+                "valid/wakeup_loss": valid_result["wakeup_loss"],
+                "valid/onset_pos_only_loss": valid_result["onset_pos_only_loss"],
+                "valid/wakeup_pos_only_loss": valid_result["wakeup_pos_only_loss"],
             }
         )
         if epoch % log_interval == 0:
             metrics_monitor.show(log_interval=log_interval)
 
-        score = valid_result["loss"]
+        # score = valid_result["loss"]
+        score = (
+            valid_result["wakeup_pos_only_loss"] + valid_result["onset_pos_only_loss"]
+        )
         early_stopping.check(score, model, config.model_save_path)
         if early_stopping.is_early_stop:
             logger.info(
@@ -380,8 +421,21 @@ def train_one_fold(
             break
 
     metrics_monitor.save(config.metrics_save_path, fold)
-    metrics_monitor.plot(config.metrics_plot_path, col=["train/loss", "valid/loss"])
+    metrics_monitor.plot(
+        config.metrics_plot_path,
+        col=[
+            "train/loss",
+            "valid/loss",
+            "valid/onset_loss",
+            "valid/wakeup_loss",
+            "valid/onset_pos_only_loss",
+            "valid/wakeup_pos_only_loss",
+        ],
+    )
     metrics_monitor.plot(config.metrics_save_path.parent / "lr.png", col=["lr"])
+    torch.save(
+        model.state_dict(), config.output_dir / f"last_{config.name}_fold{fold}.pth"
+    )
 
     elapsed_time = time.time() - start_time
     logger.info(

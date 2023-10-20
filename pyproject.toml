@@ -42,7 +42,7 @@ build-backend = "hatchling.build"
 [tool.rye]
 managed = true
 dev-dependencies = [
-    "ruff>=0.0.290",
+    "ruff>=0.1.0",
     "kaggle>=1.5.16",
     "ipython~=8.14.0",
     "jupyterlab~=4.0.2",

@@ -6,13 +6,12 @@ from functools import partial
 
 import torch
 import torch.nn as nn
-from timm.scheduler import CosineLRScheduler
 from torch.cuda.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from src.tools import AverageMeter, LossFunc, Scheduler, train_one_fold
+from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold
 from src.utils import LoggingUtils, get_class_vars, seed_everything
 
 warnings.filterwarnings("ignore")
@@ -31,8 +30,7 @@ def train_one_epoch_v2(
     device: torch.device,
     seed: int = 42,
     use_amp: bool = False,
-    # additional params
-    max_chunk_size: int = 24 * 60 * 100,
+    # -- additional params
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).train()
@@ -45,38 +43,64 @@ def train_one_epoch_v2(
     )
     for _, batch in pbar:
         with autocast(enabled=use_amp, dtype=torch.bfloat16):
-            series = torch.concat(batch[0]).float().to(device, non_blocking=True)
-            labels = torch.concat(batch[1]).float().to(device, non_blocking=True)
-            seq_ln = series.shape[0]
-            h = None
-            for start in range(0, seq_ln, max_chunk_size):
-                label = labels[start : start + max_chunk_size]
-                outs, h = model(series[start : start + max_chunk_size], h)
+            input_data_num_array = batch["input_data_num_array"].to(
+                device, non_blocking=True
+            )
+            input_data_mask_array = batch["input_data_mask_array"].to(
+                device, non_blocking=True
+            )
+            attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+            # (bs, seq_len, out_size)
+            y = batch["y"].to(device, non_blocking=True)
 
-                # positive signalを含むときにのみ学習する
-                # ほかはコンテキストをhに入れるのに使う
-                if label.sum() > 0:
-                    loss = criterion(outs, label)
-                    h = [h_.detach() for h_ in h]
+            output = model(
+                input_data_num_array,
+                input_data_mask_array,
+                attention_mask,
+            )
 
-                    scaler.scale(loss).backward()  # type: ignore
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad(set_to_none=True)
+            # y[..., 1] | y[...., 2] == 1のサンプルが一つは存在する
+            if y[..., 1:].sum() != 0:
+                # if True:
+                # loss = criterion(
+                #     output[input_data_mask_array == 1],
+                #     y[input_data_mask_array == 1],
+                # )
+                margin = 1
+                onset_use_index = y[input_data_mask_array == 1][..., 1] != 0
+                true_indecies = torch.nonzero(onset_use_index)
+                for idx in true_indecies:
+                    start = max(0, idx.item() - margin)
+                    end = min(len(onset_use_index) - 1, idx.item() + margin)
+                    onset_use_index[start:end] = True
+                loss_onset = criterion(
+                    output[input_data_mask_array == 1][..., 1][onset_use_index],
+                    y[input_data_mask_array == 1][..., 1][onset_use_index],
+                )
+                wakeup_use_index = y[input_data_mask_array == 1][..., 2] != 0
+                true_indecies = torch.nonzero(wakeup_use_index)
+                for idx in true_indecies:
+                    start = max(0, idx.item() - margin)
+                    end = min(len(wakeup_use_index) - 1, idx.item() + margin)
+                    wakeup_use_index[start:end] = True
+                loss_wakeup = criterion(
+                    output[input_data_mask_array == 1][..., 2][wakeup_use_index],
+                    y[input_data_mask_array == 1][..., 2][wakeup_use_index],
+                )
+                loss = loss_onset + loss_wakeup
 
-                    losses.update(loss.item())
-                    pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
+                scaler.scale(loss).backward()  # type: ignore
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                losses.update(loss.item())
+                pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
-    lr = (
-        scheduler._get_lr(epoch)[-1]
-        if isinstance(scheduler, CosineLRScheduler)
-        else scheduler.get_last_lr()[0]
-    )
     result = {
         "epoch": epoch,
         "loss": losses.avg,
         "elapsed_time": time.time() - start_time,
-        "lr": lr,
+        "lr": get_lr(scheduler, epoch),
     }
     return result
 
@@ -88,38 +112,79 @@ def valid_one_epoch_v2(
     device: torch.device,
     criterion: LossFunc,
     seed: int = 42,
-    # additional params
-    max_chunk_size: int = 24 * 60 * 100,
+    # -- additional params
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model.eval()
     losses = AverageMeter("loss")
+    onset_losses = AverageMeter("onset_loss")
+    wakeup_losses = AverageMeter("wakeup_loss")
+    onset_pos_only_losses = AverageMeter("onset_pos_only_loss")
+    wakeup_pos_only_losses = AverageMeter("wakeup_pos_only_loss")
     start_time = time.time()
 
     pbar = tqdm(
         enumerate(dl_valid), total=len(dl_valid), dynamic_ncols=True, leave=True
     )
     for _, batch in pbar:
-        series = torch.concat(batch[0]).float().to(device, non_blocking=True)
-        labels = torch.concat(batch[1]).float().to(device, non_blocking=True)
+        with torch.inference_mode():
+            input_data_num_array = batch["input_data_num_array"].to(
+                device, non_blocking=True
+            )
+            input_data_mask_array = batch["input_data_mask_array"].to(
+                device, non_blocking=True
+            )
+            attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+            y = batch["y"].to(device, non_blocking=True)
 
-        with torch.no_grad():
-            seq_ln = series.shape[0]
-            h = None
-            for start in range(0, seq_ln, max_chunk_size):
-                label = labels[start : start + max_chunk_size]
-                outs, h = model(series[start : start + max_chunk_size], h)
-                loss = criterion(outs, label)
-                h = [h_.detach() for h_ in h]
+            output = model(
+                input_data_num_array,
+                input_data_mask_array,
+                attention_mask,
+            )
 
-                loss = criterion(outs, labels)
+            loss = criterion(
+                output[input_data_mask_array == 1], y[input_data_mask_array == 1]
+            )
+            losses.update(loss.item())
 
-                losses.update(loss.item())
-                pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
+            onset_loss = criterion(
+                output[input_data_mask_array == 1][..., 1],
+                y[input_data_mask_array == 1][..., 1],
+            )
+            onset_losses.update(onset_loss.item())
+
+            wakeup_loss = criterion(
+                output[input_data_mask_array == 1][..., 2],
+                y[input_data_mask_array == 1][..., 2],
+            )
+            wakeup_losses.update(wakeup_loss.item())
+
+            onset_pos_idx = y[input_data_mask_array == 1][..., 1] == 1
+            onset_pos_only_loss = criterion(
+                output[input_data_mask_array == 1][onset_pos_idx][..., 1],
+                y[input_data_mask_array == 1][onset_pos_idx][..., 1],
+            )
+            if not torch.isnan(onset_pos_only_loss):
+                onset_pos_only_losses.update(onset_pos_only_loss.item())
+
+            wakeup_pos_idx = y[input_data_mask_array == 1][..., 2] == 1
+            wakeup_pos_only_loss = criterion(
+                output[input_data_mask_array == 1][wakeup_pos_idx][..., 2],
+                y[input_data_mask_array == 1][wakeup_pos_idx][..., 2],
+            )
+            if not torch.isnan(wakeup_pos_only_loss):
+                wakeup_pos_only_losses.update(wakeup_pos_only_loss.item())
+
+            pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
     result = {
         "epoch": epoch,
         "loss": losses.avg,
+        "onset_loss": onset_losses.avg,
+        "wakeup_loss": wakeup_losses.avg,
+        "onset_pos_only_loss": onset_pos_only_losses.avg,
+        "wakeup_pos_only_loss": wakeup_pos_only_losses.avg,
         "elapsed_time": time.time() - start_time,
     }
     return result
@@ -127,24 +192,14 @@ def valid_one_epoch_v2(
 
 def main(config: str, fold: int, debug: bool) -> None:
     cfg = importlib.import_module(f"src.configs.{config}").Config
-    cfg.model_save_path = cfg.output_dir / (f"{config}_model_fold" + f"{fold}.pth")
+    cfg.model_save_path = cfg.output_dir / (cfg.model_save_name + f"{fold}.pth")
     log_fp = cfg.output_dir / f"{config}_fold{fold}.log"
     LoggingUtils.add_file_handler(LOGGER, log_fp)
 
     cfg_map = get_class_vars(cfg)
     LOGGER.info(f"Fold: {fold}\n {pprint.pformat(cfg_map)}")
-
-    train_one_fold(
-        cfg,
-        fold,
-        debug,
-        train_one_epoch=partial(
-            train_one_epoch_v2, max_chunk_size=cfg.train_max_chunk_size
-        ),
-        valid_one_epoch=partial(
-            valid_one_epoch_v2, max_chunk_size=cfg.infer_max_chunk_size
-        ),
-    )
+    train_one_fold(cfg, fold, debug, train_one_epoch_v2, valid_one_epoch_v2)
+    LOGGER.info(f"Fold {fold} training has finished.")
 
 
 if __name__ == "__main__":

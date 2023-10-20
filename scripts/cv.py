@@ -10,6 +10,7 @@ import polars as pl
 from src.metrics import column_names, score, tolerances
 from src.run import Runner
 from src.utils import LoggingUtils, get_class_vars
+from tqdm.auto import tqdm
 
 logger = LoggingUtils.get_stream_logger(20)
 
@@ -22,9 +23,19 @@ parser.add_argument("--fold", type=int, default=0)
 args = parser.parse_args()
 
 config = importlib.import_module(f"src.configs.{args.config}").Config
+
+####### UPDATE PARAMS #######
+config.batch_size = 8
+config.seq_len = 24 * 60 * 60
+config.shift_size = config.seq_len // 2
+config.offset_size = config.seq_len // 4
+# config.model_save_path = config.output_dir / f"{config.name}_model_fold0.pth"
+config.model_save_path = config.output_dir / f"last_exp004_fold0.pth"
+
 logger.info(f"fold: {args.fold}, debug: {args.debug}")
 logger.info(f"\n{pprint.pformat(get_class_vars(config))}")
 
+########## VALID ##########
 df_valid_series = pl.read_parquet(config.train_series_path).filter(
     pl.col("fold") == args.fold
 )
@@ -106,17 +117,30 @@ for sid in sids:
     ax[1].plot(df_valid_series_sid["enmo"])
     ax[1].set_title("enmo")
     # eventの起きたタイミングをプロット
-    for event_step, event_type in zip(
-        valid_sol_sid["step"].values, valid_sol_sid["event"].values
+    # red: label_onset
+    # green: label_wakeup
+    # yellow: pred_onset
+    # purple: pred_wakeup
+    for event_step, event_type in tqdm(
+        zip(valid_sol_sid["step"].values, valid_sol_sid["event"].values),
+        desc="Make Plot",
     ):
         color = "red" if event_type == "onset" else "green"
-        ax[0].axvline(event_step, color=color, alpha=0.5)
-        ax[1].axvline(event_step, color=color, alpha=0.5)
+        ax[0].axvline(event_step, color=color, alpha=0.5, label="label_" + event_type)
+        ax[1].axvline(event_step, color=color, alpha=0.5, label="label_" + event_type)
+
     for event_step, event_type in zip(sub_sid["step"].values, sub_sid["event"].values):
         color = "yellow" if event_type == "onset" else "purple"
-        ax[0].axvline(event_step, color=color, alpha=0.5)
-        ax[1].axvline(event_step, color=color, alpha=0.5)
+        ax[0].axvline(event_step, color=color, alpha=0.5, label="pred_" + event_type)
+        ax[1].axvline(event_step, color=color, alpha=0.5, label="pred_" + event_type)
+
+    handles, labels = plt.gca().get_legend_handles_labels()
+    labels, ids = np.unique(labels, return_index=True)
+    handles = [handles[i] for i in ids]
+    fig.legend(handles, labels, loc="upper right")
     fig.tight_layout()
     save_dir = config.output_dir.parent / "analysis"
     save_dir.mkdir(exist_ok=True, parents=True)
     fig.savefig(save_dir / f"{config.name}_sid-{sid}.png")
+
+print(f"\n CV score: {cv_score}")

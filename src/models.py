@@ -89,10 +89,80 @@ class MultiResidualBiGRU(nn.Module):
         return x, new_h  # log probabilities + hidden states
 
 
+class SleepRNNMocel(nn.Module):
+    """
+    Refs:
+    [1] https://github.com/TakoiHirokazu/Kaggle-Parkinsons-Freezing-of-Gait-Prediction/blob/main/takoi/exp/ex143_tdcsfog_gru.ipynb
+    """
+
+    def __init__(
+        self,
+        dropout: float = 0.2,
+        input_num_size: int = 12,
+        num_linear_size: int = 64,
+        model_size=128,
+        linear_out=128,
+        out_size: int = 3,
+    ) -> None:
+        super().__init__()
+
+        self.num_linear = nn.Sequential(
+            nn.Linear(input_num_size, num_linear_size),
+            nn.LayerNorm(num_linear_size),
+        )
+
+        self.rnn = nn.GRU(
+            num_linear_size,
+            model_size,
+            batch_first=True,
+            bidirectional=True,
+        )
+
+        self.fc_out = nn.Sequential(
+            nn.Linear(model_size * 2, linear_out),
+            nn.LayerNorm(linear_out),
+            nn.Dropout(dropout),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(linear_out, out_size),
+        )
+
+    def _reinitialize(self):
+        """
+        Tensorflow/Keras-like initialization
+        """
+        for name, p in self.named_parameters():
+            if "rnn" in name:
+                if "weight_ih" in name:
+                    nn.init.xavier_uniform_(p.data)
+                elif "weight_hh" in name:
+                    nn.init.orthogonal_(p.data)
+                elif "bias_ih" in name:
+                    p.data.fill_(0)
+                    # Set forget-gate bias to 1
+                    n = p.size(0)
+                    p.data[(n // 4) : (n // 2)].fill_(1)
+                elif "bias_hh" in name:
+                    p.data.fill_(0)
+
+    def forward(
+        self,
+        num_array: torch.Tensor,
+        mask_array: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        num_embed = self.num_linear(num_array)
+        out, _ = self.rnn(num_embed)
+        out = self.fc_out(out)
+        return out
+
+
 class ModelConfig(Protocol):
     model_type: str
     input_size: int
     hidden_size: int
+    model_size: int
+    linear_out: int
     out_size: int
     n_layers: int
     bidir: bool
@@ -108,6 +178,16 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             bidir=config.bidir,
         )
         return model
+    elif config.model_type == "SleepRNNModel":
+        model = SleepRNNMocel(
+            input_num_size=config.input_size,
+            num_linear_size=config.hidden_size,
+            model_size=config.model_size,
+            linear_out=config.linear_out,
+            out_size=config.out_size,
+        )
+        return model
+
     else:
         raise NotImplementedError
 
@@ -126,5 +206,34 @@ def test_run_model():
     print([h_i.shape for h_i in h])
 
 
+def test_run_model2():
+    num_feats = 8
+
+    model = SleepRNNMocel(input_num_size=num_feats).cuda()
+    model = model.train()
+
+    seq_len = 1000  # ここは自由
+    # seq_len = 10000
+    bs = 8 * 190  # max bs
+    num_arr = torch.randn(bs, seq_len, num_feats).cuda()
+    mask_arr = torch.ones(bs, seq_len).cuda()
+    attention_mask = torch.ones(bs, seq_len).cuda()
+    y = torch.randint(0, 1, (bs, seq_len, 3)).float().cuda()
+    criterion = nn.BCEWithLogitsLoss()
+    scaler = torch.cuda.amp.grad_scaler.GradScaler()
+
+    print("num_arr: ", num_arr.shape)
+    print("mask_arr: ", mask_arr.shape)
+    print("attention_mask: ", attention_mask.shape)
+    # p: (bs, seq_len, out_size)
+    with torch.cuda.amp.autocast_mode.autocast(dtype=torch.bfloat16):
+        p = model(num_arr, mask_arr, attention_mask)
+        loss = criterion(p, y)
+        scaler.scale(loss).backward()  # type: ignore
+
+    print("pred: ", p.shape)
+
+
 if __name__ == "__main__":
-    test_run_model()
+    # test_run_model()
+    test_run_model2()
