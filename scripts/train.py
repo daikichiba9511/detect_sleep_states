@@ -72,7 +72,7 @@ def train_one_epoch_v2(
                 #     y[input_data_mask_array == 1],
                 # )
                 start_margin = 1
-                end_margin = 1
+                end_margin = 0
                 onset_use_index = y[input_data_mask_array == 1][..., 1] != 0
                 true_indecies = torch.nonzero(onset_use_index)
                 for idx in true_indecies:
