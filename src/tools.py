@@ -124,10 +124,10 @@ class MetricsMonitor:
         self._metrics_df = pd.concat([self._metrics_df, _metrics], axis=0)
 
     def show(self, log_interval: int = 1) -> None:
-        loggin_metrics = self._metrics_df.iloc[
+        loggin_metrics: pd.DataFrame = self._metrics_df.iloc[
             list(range(0, len(self._metrics_df), log_interval))
         ]
-        logger.info(f"\n{loggin_metrics}")
+        logger.info(f"\n{loggin_metrics.to_markdown()}")
 
     def plot(
         self,
