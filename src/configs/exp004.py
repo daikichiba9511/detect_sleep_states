@@ -20,7 +20,7 @@ class Config:
 
     # Train
     use_amp: bool = True
-    num_epochs: int = 10 * 3
+    num_epochs: int = 10 * 2
     # batch_size: int = 128  # train
     batch_size: int = 64
     num_workers: int = 16

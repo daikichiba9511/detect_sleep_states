@@ -71,12 +71,13 @@ def train_one_epoch_v2(
                 #     output[input_data_mask_array == 1],
                 #     y[input_data_mask_array == 1],
                 # )
-                margin = 5
+                start_margin = 1
+                end_margin = 1
                 onset_use_index = y[input_data_mask_array == 1][..., 1] != 0
                 true_indecies = torch.nonzero(onset_use_index)
                 for idx in true_indecies:
-                    start = max(0, idx.item() - margin)
-                    end = min(len(onset_use_index) - 1, idx.item() + margin)
+                    start = max(0, idx.item() - start_margin)
+                    end = min(len(onset_use_index) - 1, idx.item() + end_margin)
                     onset_use_index[start:end] = True
                 loss_onset = criterion(
                     output[input_data_mask_array == 1][..., 1][onset_use_index],
@@ -85,8 +86,8 @@ def train_one_epoch_v2(
                 wakeup_use_index = y[input_data_mask_array == 1][..., 2] != 0
                 true_indecies = torch.nonzero(wakeup_use_index)
                 for idx in true_indecies:
-                    start = max(0, idx.item() - margin)
-                    end = min(len(wakeup_use_index) - 1, idx.item() + margin)
+                    start = max(0, idx.item() - start_margin)
+                    end = min(len(wakeup_use_index) - 1, idx.item() + end_margin)
                     wakeup_use_index[start:end] = True
                 loss_wakeup = criterion(
                     output[input_data_mask_array == 1][..., 2][wakeup_use_index],
