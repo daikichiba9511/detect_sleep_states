@@ -67,6 +67,11 @@ for sid in submission["series_id"].unique():
         **column_names,  # type: ignore
     )
 
+min_score_sid = min(score_per_sid, key=score_per_sid.get)  # type: ignore
+max_score_sid = max(score_per_sid, key=score_per_sid.get)  # type: ignore
+print(f"min score sid: {min_score_sid}, score: {score_per_sid[min_score_sid]}")
+print(f"max score sid: {max_score_sid}, score: {score_per_sid[max_score_sid]}")
+
 print("\n score per sid")
 pprint.pprint(score_per_sid)
 
@@ -82,6 +87,8 @@ print(f"\n CV score: {cv_score}")
 sids = [
     "038441c925bb",
     "fe90110788d2",
+    min_score_sid,
+    max_score_sid,
 ]
 for sid in sids:
     valid_sol_sid = df_valid_solution[df_valid_solution["series_id"] == sid]

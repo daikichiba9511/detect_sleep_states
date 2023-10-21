@@ -202,7 +202,27 @@ class Runner:
         submission = submission[["row_id", "series_id", "step", "event", "score"]]
         return submission
 
-    def _make_preds_v3(
+    def _maek_pred_v3(
+        self,
+        model: nn.Module,
+        batch: tuple[torch.Tensor, torch.Tensor, list[str], torch.Tensor],
+        chunk_size: int,
+    ) -> torch.Tensor:
+        device = self.device
+        # (BS, seq_len, n_features)
+        X = batch[0].to(device, non_blocking=True)
+        pred = torch.zeros(*X.shape[:2], 2).to(device, non_blocking=True)
+        seq_len = X.shape[1]
+        # Window sliding inference
+        for i in range(0, seq_len, chunk_size):
+            ch_s = i
+            ch_e = min(pred.shape[1], i + chunk_size)
+            x_chunk = X[:, ch_s:ch_e, :].to(device, non_blocking=True)
+            logits = model(x_chunk, None, None)
+            pred[:, ch_s:ch_e] = logits.detach()
+        return pred
+
+    def _make_sub_v3(
         self,
         model: nn.Module,
         dl: DataLoader,
@@ -219,19 +239,9 @@ class Runner:
         total_sub = pd.DataFrame()
         for i, batch in pbar:
             with torch.inference_mode():
-                # (BS, seq_len, n_features)
-                X = batch[0].to(device, non_blocking=True)
                 # (BS, seq_len, 2)
                 sid = batch[2]
-                pred = torch.zeros(*X.shape[:2], 2).to(device, non_blocking=True)
-                seq_len = X.shape[1]
-                # Window sliding inference
-                for i in range(0, seq_len, chunk_size):
-                    ch_s = i
-                    ch_e = min(pred.shape[1], i + chunk_size)
-                    x_chunk = X[:, ch_s:ch_e, :].to(device, non_blocking=True)
-                    logits = model(x_chunk, None, None)
-                    pred[:, ch_s:ch_e] = logits.detach()
+                pred = self._maek_pred_v3(model, batch, chunk_size)
 
                 if criterion is not None and losses is not None:
                     normalized_pred = mean_std_normalize_label(pred)
@@ -257,6 +267,9 @@ class Runner:
                 days = len(pred) // (17280 / 12)
 
                 # Make scores of onset/wakeup
+                # idxから前後min_intervalの中で最大の値を取る
+                # これがidxの値と同じならば、そのidxはonset/wakeupの候補となる
+                # len(pred) // (17280 / 12) で、predの長さを日数に変換
                 score_onset = np.zeros(len(pred), np.float32)
                 score_wakeup = np.zeros(len(pred), np.float32)
                 for idx in range(len(pred)):
@@ -281,6 +294,7 @@ class Runner:
                 step = pd.DataFrame(dict(step=batch[3].numpy().reshape(-1)))
 
                 # Make onset
+                # 1 sample per minite
                 downsample_factor = 12
                 onset = step.iloc[
                     np.clip(candidates_onset * downsample_factor, 0, len(step) - 1)
@@ -329,7 +343,7 @@ class Runner:
             losses_meter = None
 
         print("ChunkSize => ", self.config.infer_chunk_size)
-        outs = self._make_preds_v3(
+        outs = self._make_sub_v3(
             model, dl, criterion, losses_meter, chunk_size=self.config.infer_chunk_size
         )
         # submission = self._make_sub(outs)

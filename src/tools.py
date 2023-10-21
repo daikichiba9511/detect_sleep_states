@@ -433,9 +433,11 @@ def train_one_fold(
             )
             break
 
-    metrics_monitor.save(config.metrics_save_path, fold)
+    metrics_monitor.save(
+        config.metrics_save_path.parent / f"{config.name}_metrics_fold{fold}.csv", fold
+    )
     metrics_monitor.plot(
-        config.metrics_plot_path,
+        config.metrics_plot_path.parent / f"{config.name}_losses_fold{fold}.png",
         col=[
             "train/loss",
             "valid/loss",
