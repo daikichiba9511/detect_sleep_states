@@ -61,5 +61,7 @@ def build_criterion(criterion_type: str) -> Callable:
         return torch.nn.BCEWithLogitsLoss()
     elif criterion_type == "BCEWithLogitsLossWeightedPos":
         return partial(bce_with_weighted_postive, weights=(0.8, 0.8, 0.2))
+    elif criterion_type == "MSELoss":
+        return torch.nn.MSELoss()
     else:
         raise NotImplementedError

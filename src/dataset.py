@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 import json
 
+import joblib
 from src.fe import make_sequence_chunks
 from src.utils import seed_everything
 
@@ -203,6 +204,11 @@ def build_dataloader(
             collate_fn=collate_fn,
         )
         return dl_train
+
+
+###################################################
+# SleepDatasetV2
+###################################################
 
 
 def preprcess(num_array: np.ndarray, mask_array: np.ndarray) -> dict[str, np.ndarray]:
@@ -551,6 +557,315 @@ def build_dataloader_v2(
         return dl_train
 
 
+############################################
+# SleepDatasetV3
+############################################
+def mean_std_normalize_label(y: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
+    mean_0 = y[:, 0].mean().item()
+    std_0 = y[:, 0].std().item()
+    y[:, 0] = (y[:, 0] - mean_0) / (std_0 + eps)
+
+    mean_1 = y[:, 1].mean().item()
+    std_1 = y[:, 1].std().item()
+    y[:, 1] = (y[:, 1] - mean_1) / (std_1 + eps)
+    return y
+
+
+class SleepDatasetV3(Dataset):
+    def __init__(
+        self,
+        phase: str,
+        data: list[pl.DataFrame],
+        downsample_factor: int,
+        ids: list[str],
+        targets: list[list[tuple[int, int]]] | None,
+        sigma: int | None,
+        w_sigma: float | None,
+    ):
+        if phase not in ["train", "valid", "test"]:
+            raise NotImplementedError
+
+        if phase in ["train", "valid"] and targets is None:
+            raise ValueError("targets must be not None when phase is train or valid")
+
+        if phase in ["train", "valid"] and sigma is None:
+            raise ValueError("sigma must be not None when phase is train or valid")
+
+        if phase in ["train", "valid"] and w_sigma is None:
+            raise ValueError("w_sigma must be not None when phase is train or valid")
+
+        self.phase = phase
+        self.targets = targets
+        self.data = data
+        self.ids = ids
+        self.sigma = sigma
+        self.downsample_factor = downsample_factor
+        self.w_sigma = w_sigma
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def downsample_and_create_feats(self, feat: np.ndarray, downsample_factor: int):
+        # downsample
+        # 0-padding
+        if len(feat) % downsample_factor != 0:
+            zeros = (
+                np.zeros(downsample_factor - (len(feat) % downsample_factor)) + feat[-1]
+            )
+            feat = np.concatenate([feat, zeros])
+
+        feat = np.reshape(feat, (-1, downsample_factor)).astype(np.float32)
+        feat_mean = np.mean(feat, 1)
+        feat_std = np.std(feat, 1)
+        feat_median = np.median(feat, 1)
+        feat_max = np.max(feat, 1)
+        feat_min = np.min(feat, 1)
+        # shift_feat_mean = np.roll(feat_mean, 1)
+        # shift2_feat_mean = np.roll(feat_mean, 2)
+        # diff_featmean_featmean_mean = feat_mean - np.mean(feat_mean)
+        # diff_featmean_featmean_median = feat_mean - np.median(feat_mean)
+        feat = np.dstack(
+            [
+                feat_mean,
+                feat_std,
+                feat_median,
+                feat_max,
+                feat_min,
+                # shift_feat_mean,
+                # shift2_feat_mean,
+                # diff_featmean_featmean_mean,
+                # diff_featmean_featmean_median,
+            ]
+        )[0]
+        return feat
+
+    def downsample_sequence(self, feat, downsample_factor: int):
+        # downsample
+        # 0-padding
+        if len(feat) % downsample_factor != 0:
+            zeros = np.zeros(
+                downsample_factor - (len(feat) % downsample_factor) + feat[-1]
+            )
+            feat = np.concatenate([feat, zeros])
+
+        feat = np.reshape(feat, (-1, downsample_factor))
+        feat = np.mean(feat, 1)
+        return feat
+
+    def gaussian(self, n: int, sigma: float):
+        # gaussian distribution function
+        r = np.arange(-n // 2, n // 2 + 1)
+        return [
+            1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-(float(x) ** 2) / (2 * sigma**2))
+            for x in r
+        ]
+
+    def _make_label(self, data_i: np.ndarray, index: int) -> torch.Tensor:
+        if self.targets is None or self.sigma is None or self.w_sigma is None:
+            raise ValueError(
+                "targets, sigma, downsample_factor must be not None when phase is train or valid"
+            )
+
+        # yには対応するseriesのevent_range: list[(start, end)]が入ってる
+        target_ranges = self.targets[index]
+        sigma = self.sigma
+        # targetの値をガウス分布に変換
+        target_gaussian = np.zeros((len(data_i), 2))
+        gause_pdf_v = self.gaussian(n=sigma, sigma=sigma * self.w_sigma)
+        for start, end in target_ranges:
+            # start, endの点を中心にsigmaの範囲でガウス分布を作成
+            s1 = max(0, start - self.sigma // 2)
+            s2 = start + self.sigma // 2 + 1
+            e1 = end - self.sigma // 2
+            e2 = min(len(data_i), end + self.sigma // 2 + 1)
+
+            target_gaussian[s1:s2, 0] = gause_pdf_v[s1 - (start - sigma // 2) :]
+            target_gaussian[e1:e2, 1] = gause_pdf_v[
+                : sigma + 1 - ((end + sigma // 2 + 1) - e2)
+            ]
+        y = target_gaussian
+        y = np.dstack(
+            [
+                self.downsample_sequence(y[:, i], self.downsample_factor)
+                for i in range(y.shape[-1])
+            ]
+        )[0]
+        y = mean_std_normalize_label(torch.from_numpy(y).float())
+        return y
+
+    def __getitem__(self, index: int):
+        data_i = self.data[index][["anglez", "enmo"]].to_numpy()
+        sid = self.ids[index]
+        step = self.data[index]["step"].to_numpy().astype(int)
+
+        X = np.concatenate(
+            [
+                self.downsample_and_create_feats(data_i[:, i], self.downsample_factor)
+                for i in range(data_i.shape[-1])
+            ],
+            axis=-1,
+        )
+        X = torch.from_numpy(X).float()
+        if self.phase == "test":
+            return X, -np.inf, sid, step
+        y = self._make_label(data_i, index)
+        return X, y, sid, step
+
+
+class DataloaderConfigV3(Protocol):
+    seed: int
+
+    train_series_path: str | Path
+    train_events_path: str | Path
+    test_series_path: str | Path
+
+    batch_size: int
+    num_workers: int
+
+    window_size: int
+    out_size: int
+
+    sigma: int
+    """default: 720"""
+    downsample_factor: int
+    """default: 12 <=> 1 sample/min"""
+    w_sigma: float
+    """default: 0.15"""
+
+    series_dir: Path
+    target_series_uni_ids_path: Path
+
+
+def build_dataloader_v3(
+    config: DataloaderConfigV3,
+    fold: int,
+    phase: str,
+    debug: bool,
+) -> DataLoader:
+    if phase not in ["train", "valid", "test"]:
+        raise NotImplementedError
+
+    num_workers = 2 if debug else config.num_workers
+    if phase == "test":
+        print("######### Test ###########")
+        df_test_series = pl.read_parquet(config.test_series_path)
+        data_test_series = []
+        sid_test = []
+        for sid in df_test_series["series_id"].unique():
+            data_test_series.append(
+                df_test_series.filter(pl.col("series_id") == sid).to_pandas(
+                    use_pyarrow_extension_array=True
+                )
+            )
+            sid_test.append(sid)
+        ds_test = SleepDatasetV3(
+            phase,
+            targets=None,
+            data=data_test_series,
+            ids=sid_test,
+            sigma=config.sigma,
+            downsample_factor=config.downsample_factor,
+            w_sigma=config.w_sigma,
+        )
+        dl_test = DataLoader(
+            ds_test,
+            batch_size=1,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+            drop_last=False,
+            # collate_fn=collate_fn,
+        )
+        return dl_test
+    elif phase == "valid":
+        print("######### Valid ###########")
+        df_valid_series = pl.read_parquet(config.train_series_path)
+        df_valid_series = df_valid_series.filter(pl.col("fold") == fold)
+        valid_series_ids = df_valid_series["series_id"].unique().to_list()
+
+        targets, data_valid_series, ids = joblib.load(config.target_series_uni_ids_path)
+
+        valid_targets = []
+        valid_data = []
+        valid_ids = []
+        for i, sid in enumerate(ids):
+            if sid in valid_series_ids:
+                valid_targets.append(targets[i])
+                valid_data.append(
+                    data_valid_series[i].to_pandas(use_pyarrow_extension_array=True)
+                )
+                valid_ids.append(sid)
+            if debug and i > 50:
+                break
+
+        ds_valid = SleepDatasetV3(
+            phase,
+            targets=valid_targets,
+            data=valid_data,
+            ids=valid_ids,
+            sigma=config.sigma,
+            downsample_factor=config.downsample_factor,
+            w_sigma=config.w_sigma,
+        )
+        dl_valid = DataLoader(
+            ds_valid,
+            batch_size=config.batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+            drop_last=False,
+            # collate_fn=collate_fn,
+        )
+        return dl_valid
+    else:
+        print("######### Train ###########")
+        df_train_series = pl.read_parquet(config.train_series_path)
+        df_train_series = df_train_series.filter(pl.col("fold") != fold)
+        train_series_ids = df_train_series["series_id"].unique().to_list()
+        print(len(train_series_ids))
+
+        targets, data_train_series, ids = joblib.load(config.target_series_uni_ids_path)
+
+        train_targets = []
+        train_data = []
+        train_ids = []
+        for i, sid in enumerate(ids):
+            if sid in train_series_ids:
+                train_targets.append(targets[i])
+                train_data.append(
+                    data_train_series[i].to_pandas(use_pyarrow_extension_array=True)
+                )
+                train_ids.append(sid)
+            if debug and i > 50:
+                break
+
+        print("Train data size: ", len(train_data))
+
+        ds_train = SleepDatasetV3(
+            phase,
+            targets=train_targets,
+            data=train_data,
+            ids=train_ids,
+            sigma=config.sigma,
+            downsample_factor=config.downsample_factor,
+            w_sigma=config.w_sigma,
+        )
+        dl_train = DataLoader(
+            ds_train,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=True,
+            drop_last=True,
+            worker_init_fn=lambda _: seed_everything(config.seed),
+            # collate_fn=collate_fn,
+        )
+        return dl_train
+
+
+############################################
+# test
+############################################
 def test_ds():
     import collections
 
@@ -610,6 +925,90 @@ def test_ds2():
     print(label.max())
     print(label.min())
     print(collections.Counter(label.numpy()))
+
+
+def test_ds3():
+    class Config:
+        seed: int = 42
+        batch_size = 32
+        num_workers = 0
+        # Used in build_dataloader
+        window_size: int = 10
+        root_dir: Path = Path(".")
+        input_dir: Path = root_dir / "input"
+        data_dir: Path = input_dir / "child-mind-institute-detect-sleep-states"
+        train_series_path: str | Path = (
+            input_dir / "for_train" / "train_series_fold.parquet"
+        )
+        train_events_path: str | Path = data_dir / "train_events.csv"
+        test_series_path: str | Path = data_dir / "test_series.parquet"
+
+        normalize_type: str = "robust"
+        seq_len: int = 1000
+        offset_size: int = 250
+        shift_size: int = 500
+
+        out_size: int = 3
+
+        series_dir = Path("./output/series")
+        target_series_uni_ids_path: Path = series_dir / "target_series_uni_ids.pkl"
+
+        sigma: int = 720
+        downsample_factor: int = 12
+        w_sigma: float = 0.15
+
+    targets, series, ids = joblib.load(Config.target_series_uni_ids_path)
+    ds = SleepDatasetV3(
+        phase="train",
+        targets=targets,
+        data=series,
+        ids=ids,
+        sigma=Config.sigma,  # avg length of day is 24*60*12=17280
+        downsample_factor=Config.downsample_factor,
+        w_sigma=Config.w_sigma,
+    )
+    batch = ds[0]
+    X, y = batch
+    assert isinstance(X, torch.Tensor)
+    assert isinstance(y, torch.Tensor)
+    print(X.shape)
+    print(y.shape)
+    print(y.max(), y.min(), y.mean(), y.std())
+
+    import matplotlib.pyplot as plt
+
+    print(targets[0])
+
+    s = 300
+    e = 1000
+    plt.figure()
+    plt.scatter(list(range(len(y[s:e]))), y[s:e, 0], label="onset", alpha=0.5)
+    plt.scatter(list(range(len(y[s:e]))), y[s:e, 1], label="wakeup", alpha=0.5)
+    plt.title("label dist.")
+    plt.legend()
+    plt.savefig(f"./output/analysis/test_ds3_batch0_label_{s}_{e}.png")
+    plt.close("all")
+
+    test_series = pl.read_parquet(Config.test_series_path)
+    test = []
+    for sid in test_series["series_id"].unique():
+        test.append(test_series.filter(pl.col("series_id") == sid))
+
+    ds_test = SleepDatasetV3(
+        phase="test",
+        targets=None,
+        data=test,
+        ids=test_series["series_id"].unique().to_list(),
+        sigma=720,  # avg length of day is 24*60*12=17280
+        downsample_factor=12,
+        w_sigma=0.15,
+    )
+    batch = ds_test[0]
+    X, y = batch
+    assert isinstance(X, torch.Tensor)
+    assert not isinstance(y, torch.Tensor)
+    print(X.shape)
+    print(y)
 
 
 def test_build_dl():
@@ -733,8 +1132,46 @@ def test_build_dl_v2():
     print("build_dataloader test passed")
 
 
+def test_build_dl_v3():
+    class Config:
+        seed: int = 42
+        batch_size: int = 1
+        num_workers: int = 0
+        # Used in build_dataloader
+        window_size: int = 10
+        root_dir: Path = Path(".")
+        input_dir: Path = root_dir / "input"
+        data_dir: Path = input_dir / "child-mind-institute-detect-sleep-states"
+        train_series_path: str | Path = (
+            input_dir / "for_train" / "train_series_fold.parquet"
+        )
+        train_events_path: str | Path = data_dir / "train_events.csv"
+        test_series_path: str | Path = data_dir / "test_series.parquet"
+
+        out_size: int = 3
+        series_dir: Path = Path("./output/series")
+        target_series_uni_ids_path: Path = series_dir / "target_series_uni_ids.pkl"
+
+        sigma: int = 720
+        downsample_factor: int = 12
+        w_sigma: float = 0.15
+
+    dl = build_dataloader_v3(Config, 0, "train", debug=True)
+
+    batch = next(iter(dl))
+    print(type(batch))
+    print(len(batch))
+    x, y, sid, step = batch
+    print(x.shape)
+    print(y.shape)
+    print(sid)
+    print(step)
+
+
 if __name__ == "__main__":
     # test_ds()
     # test_ds2()
+    # test_ds3()
     # test_build_dl()
-    test_build_dl_v2()
+    # test_build_dl_v2()
+    test_build_dl_v3()

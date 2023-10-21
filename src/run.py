@@ -10,7 +10,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from src.dataset import build_dataloader_v2
+from src.tools import AverageMeter
+from src.dataset import build_dataloader_v3, mean_std_normalize_label
 from src.losses import build_criterion
 from src.models import build_model
 from src.tools import AverageMeter
@@ -30,12 +31,10 @@ class Runner:
     def _init_dl(self, debug: bool = False, fold: int = 0) -> DataLoader:
         print("Debug mode:", debug)
         if self.is_val:
-            dl = build_dataloader_v2(
-                self.dataconfig, fold, "valid", debug, use_cache=False
-            )
+            dl = build_dataloader_v3(self.dataconfig, fold, "valid", debug)
             return dl
         else:
-            dl = build_dataloader_v2(self.dataconfig, fold, "test", debug)
+            dl = build_dataloader_v3(self.dataconfig, fold, "test", debug)
             return dl
 
     def _init_model(self) -> nn.Module:
@@ -112,19 +111,7 @@ class Runner:
         outputs["series_ids"] = np.concatenate(outs["series_ids"], axis=0)
         return outputs
 
-    def run(self, debug: bool = False, fold: int = 0) -> pd.DataFrame:
-        model = self._init_model()
-        dl = self._init_dl(debug, fold)
-        if self.is_val:
-            criterion = build_criterion(self.config.criterion_type)
-            losses = AverageMeter("loss")
-        else:
-            criterion = None
-            losses = None
-
-        submission = pd.DataFrame()
-        outs = self._make_preds(model, dl, criterion, losses)
-
+    def _make_sub(self, outs: dict[str, np.ndarray]) -> pd.DataFrame:
         preds = outs["preds"]
         steps = outs["steps"]
         pred_use_array = outs["pred_use_array"]
@@ -213,14 +200,149 @@ class Runner:
         submission["row_id"] = submission.index.astype(int)
         submission["score"] = submission["score"].fillna(submission["score"].mean())
         submission = submission[["row_id", "series_id", "step", "event", "score"]]
+        return submission
 
+    def _make_preds_v3(
+        self,
+        model: nn.Module,
+        dl: DataLoader,
+        criterion: Callable | None,
+        losses: AverageMeter | None,
+        # -- Additional params
+        chunk_size: int,
+        min_interval: int = 30,
+    ) -> dict[str, np.ndarray | float | pd.DataFrame]:
+        device = self.device
+        pbar = tqdm(enumerate(dl), total=len(dl), dynamic_ncols=True, leave=True)
+        onset_losses = AverageMeter("onset_loss")
+        wakeup_losses = AverageMeter("wakeup_loss")
+        total_sub = pd.DataFrame()
+        for i, batch in pbar:
+            with torch.inference_mode():
+                # (BS, seq_len, n_features)
+                X = batch[0].to(device, non_blocking=True)
+                # (BS, seq_len, 2)
+                sid = batch[2]
+                pred = torch.zeros(*X.shape[:2], 2).to(device, non_blocking=True)
+                seq_len = X.shape[1]
+                # Window sliding inference
+                for i in range(0, seq_len, chunk_size):
+                    ch_s = i
+                    ch_e = min(pred.shape[1], i + chunk_size)
+                    x_chunk = X[:, ch_s:ch_e, :].to(device, non_blocking=True)
+                    logits = model(x_chunk, None, None)
+                    pred[:, ch_s:ch_e] = logits.detach()
+
+                if criterion is not None and losses is not None:
+                    normalized_pred = mean_std_normalize_label(pred)
+                    y = batch[1].to(device, non_blocking=True)
+                    loss = criterion(normalized_pred, y)
+                    loss_onset = (
+                        criterion(normalized_pred[..., 0], y[..., 0]).detach().cpu()
+                    )
+                    if not torch.isnan(loss_onset):
+                        onset_losses.update(loss_onset.item())
+
+                    loss_wakeup = (
+                        criterion(normalized_pred[..., 1], y[..., 1]).detach().cpu()
+                    )
+                    if not torch.isnan(loss_wakeup):
+                        wakeup_losses.update(loss_wakeup.item())
+
+                    losses.update(loss.item())
+                    pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
+
+                # (BS, seq_len, 2) -> (seq_len, 2)
+                pred = pred.detach().cpu().float().numpy().reshape(-1, 2)
+                days = len(pred) // (17280 / 12)
+
+                # Make scores of onset/wakeup
+                score_onset = np.zeros(len(pred), np.float32)
+                score_wakeup = np.zeros(len(pred), np.float32)
+                for idx in range(len(pred)):
+                    p_onset = pred[idx, 0]
+                    p_wakeup = pred[idx, 1]
+
+                    max_p_interval_onset = max(
+                        pred[max(0, idx - min_interval) : idx + min_interval, 0]
+                    )
+                    max_p_interval_wakeup = max(
+                        pred[max(0, idx - min_interval) : idx + min_interval, 1]
+                    )
+                    if p_onset == max_p_interval_onset:
+                        score_onset[idx] = p_onset
+                    if p_wakeup == max_p_interval_wakeup:
+                        score_wakeup[idx] = p_wakeup
+
+                # Select event(onset/wakeup) step index
+                candidates_onset = np.argsort(score_onset)[-max(1, round(days)) :]
+                candidates_wakeup = np.argsort(score_wakeup)[-max(1, round(days)) :]
+
+                step = pd.DataFrame(dict(step=batch[3].numpy().reshape(-1)))
+
+                # Make onset
+                downsample_factor = 12
+                onset = step.iloc[
+                    np.clip(candidates_onset * downsample_factor, 0, len(step) - 1)
+                ].astype(np.int32)
+                if isinstance(onset, pd.Series):
+                    onset = onset.to_frame().T
+                onset["event"] = "onset"
+                onset["score"] = score_onset[candidates_onset]
+                onset["series_id"] = sid[0]
+
+                # Make wakeup
+                wakeup = step.iloc[
+                    np.clip(candidates_wakeup * downsample_factor, 0, len(step) - 1)
+                ].astype(np.int32)
+                if isinstance(wakeup, pd.Series):
+                    wakeup = wakeup.to_frame().T
+                wakeup["event"] = "wakeup"
+                wakeup["score"] = score_wakeup[candidates_wakeup]
+                wakeup["series_id"] = sid[0]
+
+                total_sub = pd.concat([total_sub, onset, wakeup], axis=0)
+
+        total_sub = total_sub.sort_values(["series_id", "step"]).reset_index(drop=True)
+        total_sub["row_id"] = total_sub.index.astype(int)
+        total_sub["score"] = total_sub["score"].fillna(total_sub["score"].mean())
+        total_sub = total_sub[["row_id", "series_id", "step", "event", "score"]]
+        submission = total_sub[["row_id", "series_id", "step", "event", "score"]]
+
+        outputs = {}
+        outputs["submission"] = submission
         if self.is_val and losses is not None:
-            logger.info(f"fold: {fold}, loss: {losses.avg:.5f}")
+            outputs["loss"] = losses.avg
+            outputs["onset_loss"] = onset_losses.avg
+            outputs["wakeup_loss"] = wakeup_losses.avg
+
+        return outputs
+
+    def run(self, debug: bool = False, fold: int = 0) -> pd.DataFrame:
+        model = self._init_model()
+        dl = self._init_dl(debug, fold)
+        if self.is_val:
+            criterion = build_criterion(self.config.criterion_type)
+            losses_meter = AverageMeter("loss")
+        else:
+            criterion = None
+            losses_meter = None
+
+        print("ChunkSize => ", self.config.infer_chunk_size)
+        outs = self._make_preds_v3(
+            model, dl, criterion, losses_meter, chunk_size=self.config.infer_chunk_size
+        )
+        # submission = self._make_sub(outs)
+        submission = outs["submission"]
+        assert isinstance(submission, pd.DataFrame)
+
+        if self.is_val and losses_meter is not None:
+            logger.info(f"fold: {fold}, loss: {losses_meter.avg:.5f}")
         return submission
 
 
 if __name__ == "__main__":
-    config = "exp000"
+    config = "exp005"
     config = importlib.import_module(f"src.configs.{config}").Config
     runner = Runner(config=config, dataconfig=config, is_val=False)
     submission = runner.run(debug=True, fold=0)

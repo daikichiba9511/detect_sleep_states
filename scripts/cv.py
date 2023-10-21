@@ -25,12 +25,6 @@ args = parser.parse_args()
 config = importlib.import_module(f"src.configs.{args.config}").Config
 
 ####### UPDATE PARAMS #######
-config.batch_size = 8
-config.seq_len = 24 * 60 * 60
-config.shift_size = config.seq_len // 2
-config.offset_size = config.seq_len // 4
-# config.model_save_path = config.output_dir / f"{config.name}_model_fold0.pth"
-config.model_save_path = config.output_dir / f"last_exp004_fold0.pth"
 
 logger.info(f"fold: {args.fold}, debug: {args.debug}")
 logger.info(f"\n{pprint.pformat(get_class_vars(config))}")
