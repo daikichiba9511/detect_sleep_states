@@ -90,7 +90,8 @@ train2-debug: ## debug of train.py
 .PHONY: cv
 cv:
 	@PYTHONPATH=${PYTHONPATH} rye run python scripts/cv.py \
-		--config $(CONFIG)
+		--config $(CONFIG) \
+		--fold $(FOLD)
 
 %:
 	@echo 'command "$@" is not found.'

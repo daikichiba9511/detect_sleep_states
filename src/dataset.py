@@ -620,10 +620,10 @@ class SleepDatasetV3(Dataset):
         feat_median = np.median(feat, 1)
         feat_max = np.max(feat, 1)
         feat_min = np.min(feat, 1)
-        # shift_feat_mean = np.roll(feat_mean, 1)
-        # shift2_feat_mean = np.roll(feat_mean, 2)
-        # diff_featmean_featmean_mean = feat_mean - np.mean(feat_mean)
-        # diff_featmean_featmean_median = feat_mean - np.median(feat_mean)
+        shift_feat_mean = np.roll(feat_mean, 1)
+        shift2_feat_mean = np.roll(feat_mean, 2)
+        diff_featmean_featmean_mean = feat_mean - np.mean(feat_mean)
+        diff_featmean_featmean_median = feat_mean - np.median(feat_mean)
         feat = np.dstack(
             [
                 feat_mean,
@@ -631,10 +631,10 @@ class SleepDatasetV3(Dataset):
                 feat_median,
                 feat_max,
                 feat_min,
-                # shift_feat_mean,
-                # shift2_feat_mean,
-                # diff_featmean_featmean_mean,
-                # diff_featmean_featmean_median,
+                shift_feat_mean,
+                shift2_feat_mean,
+                diff_featmean_featmean_mean,
+                diff_featmean_featmean_median,
             ]
         )[0]
         return feat

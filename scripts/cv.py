@@ -25,6 +25,9 @@ args = parser.parse_args()
 config = importlib.import_module(f"src.configs.{args.config}").Config
 
 ####### UPDATE PARAMS #######
+config.fold = args.fold
+config.model_save_path = config.output_dir / f"{config.name}_model_fold{args.fold}.pth"
+
 
 logger.info(f"fold: {args.fold}, debug: {args.debug}")
 logger.info(f"\n{pprint.pformat(get_class_vars(config))}")
@@ -142,6 +145,7 @@ for sid in sids:
     fig.tight_layout()
     save_dir = config.output_dir.parent / "analysis"
     save_dir.mkdir(exist_ok=True, parents=True)
-    fig.savefig(save_dir / f"{config.name}_sid-{sid}.png")
-
+    fig.savefig(save_dir / f"{config.name}_sid-{sid}_fold{args.fold}.png")
+    plt.close("all")
+plt.close("all")
 print(f"\n CV score: {cv_score}")
