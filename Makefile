@@ -59,6 +59,11 @@ train: ## train model
 	@PYTHONPATH=${PYTHONPATH} rye run python scripts/train.py \
 		--config $(CONFIG)
 
+.PHONY: train2
+train2: ## train model
+	@PYTHONPATH=${PYTHONPATH} rye run python scripts/train_v2.py \
+		--config $(CONFIG)
+
 .PHONY: train-all
 train-all: ## train model with 5-fold
 	@for i in {0..4}; do \
@@ -93,6 +98,13 @@ cv:
 		--config $(CONFIG) \
 		--fold $(FOLD)
 
+.PHONY: cv
+cv-all:
+	@for i in {0..4}; do \
+		PYTHONPATH=${PYTHONPATH} rye run python scripts/cv.py \
+			--config $(CONFIG) \
+			--fold $$i; \
+	done
 %:
 	@echo 'command "$@" is not found.'
 	@$(MAKE) help

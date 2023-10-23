@@ -631,10 +631,10 @@ class SleepDatasetV3(Dataset):
                 feat_median,
                 feat_max,
                 feat_min,
-                shift_feat_mean,
-                shift2_feat_mean,
-                diff_featmean_featmean_mean,
-                diff_featmean_featmean_median,
+                # shift_feat_mean,
+                # shift2_feat_mean,
+                # diff_featmean_featmean_mean,
+                # diff_featmean_featmean_median,
             ]
         )[0]
         return feat
