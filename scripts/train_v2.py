@@ -62,7 +62,8 @@ def train_one_epoch_v3(
             seq_len = X.shape[1]
             for i in range(0, seq_len, chunk_size):
                 x_chunk = X[:, i : i + chunk_size, :].to(device, non_blocking=True)
-                logits = model(x_chunk, None, None)
+                # logits = model(x_chunk, None, None)
+                logits, _ = model(x_chunk, None)  # MultiResidualBiGRU
                 pred[:, i : i + chunk_size] = logits
 
             loss = criterion(mean_std_normalize_label(pred), y)
@@ -114,7 +115,7 @@ def valid_one_epoch_v3(
             seq_len = X.shape[1]
             for i in range(0, seq_len, chunk_size):
                 x_chunk = X[:, i : i + chunk_size, :].to(device, non_blocking=True)
-                logits = model(x_chunk, None, None)
+                logits, _ = model(x_chunk, None)  # MultiResidualBiGRU
                 pred[:, i : i + chunk_size] = logits
             normalized_pred = mean_std_normalize_label(pred)
             loss = criterion(normalized_pred, y)
