@@ -24,7 +24,7 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 2
-    batch_size: int = 1
+    batch_size: int = 64
     num_workers: int = 16
 
     criterion_type: str = "MSELoss"
