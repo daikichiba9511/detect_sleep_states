@@ -220,7 +220,8 @@ class Runner:
             ch_e = min(pred.shape[1], i + chunk_size)
             x_chunk = X[:, ch_s:ch_e, :].to(device, non_blocking=True)
             # logits = model(x_chunk, None, None)
-            logits, h = model(x_chunk, None)  # MultiResidualRNN
+            # logits, h = model(x_chunk, None)  # MultiResidualRNN
+            logits, h = model(x_chunk, h)  # MultiResidualRNN
             h = [h_.detach() for h_ in h]
             pred[:, ch_s:ch_e] = logits.detach()
         return pred
