@@ -696,7 +696,9 @@ class SleepDatasetV3(Dataset):
         return y
 
     def __getitem__(self, index: int):
-        data_i = self.data[index][["anglez", "enmo"]].to_numpy()
+        # バッチ内に同じseries_idが固まらないようにする
+        index_ = np.random.randint(0, len(self.data))
+        data_i = self.data[index_][["anglez", "enmo"]].to_numpy()
         sid = self.ids[index]
         step = self.data[index]["step"].to_numpy().astype(int)
         step = step[:: self.downsample_factor]
