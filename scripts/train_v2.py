@@ -64,7 +64,8 @@ def train_one_epoch_v3(
             for i in range(0, seq_len, chunk_size):
                 x_chunk = X[:, i : i + chunk_size, :].to(device, non_blocking=True)
                 # logits = model(x_chunk, None, None)
-                logits, h = model(x_chunk, None)  # MultiResidualBiGRU
+                logits, h = model(x_chunk, None)  # MultiResidualBiGRU exp007
+                # logits, h = model(x_chunk, h)  # MultiResidualBiGRU
                 pred[:, i : i + chunk_size] = logits
                 h = [h_.detach() for h_ in h]
 
@@ -118,7 +119,8 @@ def valid_one_epoch_v3(
             h = None
             for i in range(0, seq_len, chunk_size):
                 x_chunk = X[:, i : i + chunk_size, :].to(device, non_blocking=True)
-                logits, h = model(x_chunk, None)  # MultiResidualBiGRU
+                logits, h = model(x_chunk, None)  # MultiResidualBiGRU exp007
+                # logits, h = model(x_chunk, h)  # MultiResidualBiGRU
                 pred[:, i : i + chunk_size] = logits
                 h = [h_.detach() for h_ in h]
             normalized_pred = mean_std_normalize_label(pred)

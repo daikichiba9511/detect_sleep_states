@@ -202,7 +202,7 @@ class Runner:
         submission = submission[["row_id", "series_id", "step", "event", "score"]]
         return submission
 
-    def _maek_pred_v3(
+    def _make_pred_v3(
         self,
         model: nn.Module,
         batch: tuple[torch.Tensor, torch.Tensor, list[str], torch.Tensor],
@@ -214,12 +214,14 @@ class Runner:
         pred = torch.zeros(*X.shape[:2], 2).to(device, non_blocking=True)
         seq_len = X.shape[1]
         # Window sliding inference
+        h = None
         for i in range(0, seq_len, chunk_size):
             ch_s = i
             ch_e = min(pred.shape[1], i + chunk_size)
             x_chunk = X[:, ch_s:ch_e, :].to(device, non_blocking=True)
             # logits = model(x_chunk, None, None)
-            logits, _ = model(x_chunk, None)  # MultiResidualRNN
+            logits, h = model(x_chunk, None)  # MultiResidualRNN
+            h = [h_.detach() for h_ in h]
             pred[:, ch_s:ch_e] = logits.detach()
         return pred
 
@@ -242,7 +244,7 @@ class Runner:
             with torch.inference_mode():
                 # (BS, seq_len, 2)
                 sid = batch[2]
-                pred = self._maek_pred_v3(model, batch, chunk_size)
+                pred = self._make_pred_v3(model, batch, chunk_size)
 
                 if criterion is not None and losses is not None:
                     normalized_pred = mean_std_normalize_label(pred)
