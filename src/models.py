@@ -89,6 +89,62 @@ class MultiResidualBiGRU(nn.Module):
         return x, new_h  # log probabilities + hidden states
 
 
+def create_conv1dnn(in_chans: int, out_chans: int, kernel_size: int) -> nn.Module:
+    return nn.Sequential(
+        nn.Conv1d(in_chans, out_chans, kernel_size, padding=kernel_size // 2),
+        nn.ReLU(),
+    )
+
+
+class MultiResidualBiGRUMultiKSConv1D(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        out_size: int,
+        n_layers: int,
+        bidir: bool = True,
+        seq_len: int = 1000,
+    ) -> None:
+        super().__init__()
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.out_size = out_size
+        self.n_layers = n_layers
+
+        self.conv1d_ks3 = create_conv1dnn(seq_len, hidden_size, 3)
+        self.conv1d_ks5 = create_conv1dnn(seq_len, hidden_size, 5)
+        self.conv1d_ks7 = create_conv1dnn(seq_len, hidden_size, 7)
+        self.conv1d_ks9 = create_conv1dnn(1192, seq_len, 9)
+
+        self.res_bigrus = nn.ModuleList(
+            [ResidualBiGRU(10, n_layers=1, bidir=bidir) for _ in range(n_layers)]
+        )
+        self.fc_out = nn.Linear(10, out_size)
+
+    def forward(self, x: torch.Tensor, h=None) -> tuple[torch.Tensor, list]:
+        # if we are at the beginning of a sequence (no hidden state)
+        if h is None:
+            # (re)initialize the hidden state
+            h = [None for _ in range(self.n_layers)]
+
+        # x: (bs, seq_len, n_feats)
+        x = torch.cat(
+            [self.conv1d_ks3(x), self.conv1d_ks5(x), self.conv1d_ks7(x), x], dim=1
+        )
+        new_h = []
+        for i, res_bigru in enumerate(self.res_bigrus):
+            x, new_hi = res_bigru(x, h[i])
+            new_h.append(new_hi)
+
+        # (BS, 1192, n_feats) -> (BS, seq_len, n_feats)
+        x = self.conv1d_ks9(x)
+        # (BS, seq_len, n_feats) -> (BS, seq_len, out_size
+        x = self.fc_out(x)
+        return x, new_h  # log probabilities + hidden states
+
+
 class SleepRNNMocel(nn.Module):
     """
     Refs:
@@ -166,6 +222,7 @@ class ModelConfig(Protocol):
     out_size: int
     n_layers: int
     bidir: bool
+    seq_len: int
 
 
 def build_model(config: ModelConfig) -> torch.nn.Module:
@@ -187,18 +244,30 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             out_size=config.out_size,
         )
         return model
+    elif config.model_type == "MultiResidualBiGRUMultiKSConv1D":
+        model = MultiResidualBiGRUMultiKSConv1D(
+            input_size=config.input_size,
+            hidden_size=config.hidden_size,
+            out_size=config.out_size,
+            n_layers=config.n_layers,
+            bidir=config.bidir,
+            seq_len=config.seq_len,
+        )
+        return model
 
     else:
         raise NotImplementedError
 
 
 def test_run_model():
+    print("Test1")
     model = MultiResidualBiGRU(input_size=10, hidden_size=64, out_size=2, n_layers=5)
     model = model.train()
 
     max_chunk_size = 10
     bs = 32
-    x = torch.randn(bs, max_chunk_size)
+    seq_len = 1000
+    x = torch.randn(bs, seq_len, max_chunk_size)
     h = None
     p, h = model(x, h)
     print("pred: ", p.shape)
@@ -207,6 +276,7 @@ def test_run_model():
 
 
 def test_run_model2():
+    print("Test2")
     num_feats = 8
 
     model = SleepRNNMocel(input_num_size=num_feats).cuda()
@@ -234,6 +304,26 @@ def test_run_model2():
     print("pred: ", p.shape)
 
 
+def test_run_model3():
+    print("Test3")
+    model = MultiResidualBiGRUMultiKSConv1D(
+        input_size=10, hidden_size=64, out_size=2, n_layers=5
+    )
+    model = model.train()
+
+    max_chunk_size = 10
+    seq_len = 1000
+    bs = 1
+    x = torch.randn(bs, seq_len, max_chunk_size)
+    print(x.shape)
+    h = None
+    p, h = model(x, h)
+    print("pred: ", p.shape)
+    print(len(h))
+    print([h_i.shape for h_i in h])
+
+
 if __name__ == "__main__":
-    # test_run_model()
-    test_run_model2()
+    test_run_model()
+    # test_run_model2()
+    test_run_model3()

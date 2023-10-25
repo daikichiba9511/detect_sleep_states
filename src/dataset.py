@@ -581,6 +581,7 @@ class SleepDatasetV3(Dataset):
         targets: list[list[tuple[int, int]]] | None,
         sigma: int | None,
         w_sigma: float | None,
+        seq_len: int = 1000,
     ):
         if phase not in ["train", "valid", "test"]:
             raise NotImplementedError
@@ -601,6 +602,7 @@ class SleepDatasetV3(Dataset):
         self.sigma = sigma
         self.downsample_factor = downsample_factor
         self.w_sigma = w_sigma
+        self.seq_len = seq_len
 
     def __len__(self) -> int:
         return len(self.data)
@@ -697,6 +699,7 @@ class SleepDatasetV3(Dataset):
         data_i = self.data[index][["anglez", "enmo"]].to_numpy()
         sid = self.ids[index]
         step = self.data[index]["step"].to_numpy().astype(int)
+        step = step[:: self.downsample_factor]
 
         X = np.concatenate(
             [
@@ -706,9 +709,19 @@ class SleepDatasetV3(Dataset):
             axis=-1,
         )
         X = torch.from_numpy(X).float()
+
         if self.phase == "test":
             return X, -np.inf, sid, step
         y = self._make_label(data_i, index)
+        if self.phase == "valid":
+            return X, y, sid, step
+
+        # random sampling
+        start = np.random.randint(0, len(X) - self.seq_len)
+        X = X[start : start + self.seq_len]
+        y = y[start : start + self.seq_len]
+        step = step[start : start + self.seq_len]
+        assert len(X) == len(y) == len(step), f"{len(X)}, {len(y)}, {len(step)}"
         return X, y, sid, step
 
 
@@ -734,6 +747,9 @@ class DataloaderConfigV3(Protocol):
 
     series_dir: Path
     target_series_uni_ids_path: Path
+
+    train_seq_len: int
+    infer_seq_len: int
 
 
 def build_dataloader_v3(
@@ -766,6 +782,7 @@ def build_dataloader_v3(
             sigma=config.sigma,
             downsample_factor=config.downsample_factor,
             w_sigma=config.w_sigma,
+            seq_len=config.infer_seq_len,
         )
         dl_test = DataLoader(
             ds_test,
@@ -806,10 +823,11 @@ def build_dataloader_v3(
             sigma=config.sigma,
             downsample_factor=config.downsample_factor,
             w_sigma=config.w_sigma,
+            seq_len=config.infer_seq_len,
         )
         dl_valid = DataLoader(
             ds_valid,
-            batch_size=config.batch_size,
+            batch_size=1,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=True,
@@ -849,6 +867,7 @@ def build_dataloader_v3(
             sigma=config.sigma,
             downsample_factor=config.downsample_factor,
             w_sigma=config.w_sigma,
+            seq_len=config.train_seq_len,
         )
         dl_train = DataLoader(
             ds_train,
@@ -1135,7 +1154,7 @@ def test_build_dl_v2():
 def test_build_dl_v3():
     class Config:
         seed: int = 42
-        batch_size: int = 1
+        batch_size: int = 32
         num_workers: int = 0
         # Used in build_dataloader
         window_size: int = 10

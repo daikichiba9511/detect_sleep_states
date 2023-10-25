@@ -58,16 +58,7 @@ def train_one_epoch_v3(
         with autocast(enabled=use_amp, dtype=torch.bfloat16):
             X = batch[0].to(device, non_blocking=True)
             y = batch[1].to(device, non_blocking=True)
-            pred = torch.zeros(y.shape).to(device, non_blocking=True)
-            seq_len = X.shape[1]
-            h = None
-            for i in range(0, seq_len, chunk_size):
-                x_chunk = X[:, i : i + chunk_size, :].to(device, non_blocking=True)
-                # logits = model(x_chunk, None, None)
-                # logits, h = model(x_chunk, None)  # MultiResidualBiGRU exp007
-                logits, h = model(x_chunk, h)  # MultiResidualBiGRU
-                pred[:, i : i + chunk_size] = logits
-                h = [h_.detach() for h_ in h]
+            pred, _ = model(X, None)  # MultiResidualBiGRU exp007
 
             loss = criterion(mean_std_normalize_label(pred), y)
             scaler.scale(loss).backward()  # type: ignore
@@ -114,15 +105,8 @@ def valid_one_epoch_v3(
             X = batch[0].to(device, non_blocking=True)
             # (BS, seq_len, 2)
             y = batch[1].to(device, non_blocking=True)
-            pred = torch.zeros(y.shape).to(device, non_blocking=True)
-            seq_len = X.shape[1]
-            h = None
-            for i in range(0, seq_len, chunk_size):
-                x_chunk = X[:, i : i + chunk_size, :].to(device, non_blocking=True)
-                # logits, h = model(x_chunk, None)  # MultiResidualBiGRU exp007
-                logits, h = model(x_chunk, h)  # MultiResidualBiGRU
-                pred[:, i : i + chunk_size] = logits
-                h = [h_.detach() for h_ in h]
+            pred, _ = model(X, None)  # MultiResidualBiGRU exp007
+            # logits, h = model(x_chunk, h)  # MultiResidualBiGRU
             normalized_pred = mean_std_normalize_label(pred)
             loss = criterion(normalized_pred, y)
 
