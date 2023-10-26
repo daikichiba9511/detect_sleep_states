@@ -3,6 +3,7 @@ import pprint
 import time
 import warnings
 from functools import partial
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -12,13 +13,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from src.dataset import mean_std_normalize_label
-from src.tools import (
-    AverageMeter,
-    LossFunc,
-    Scheduler,
-    get_lr,
-    train_one_fold,
-)
+from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold, mixup
 from src.utils import (
     LoggingUtils,
     get_class_vars,
@@ -58,9 +53,21 @@ def train_one_epoch_v3(
         with autocast(enabled=use_amp, dtype=torch.bfloat16):
             X = batch[0].to(device, non_blocking=True)
             y = batch[1].to(device, non_blocking=True)
+
+            mixed = False
+            if np.random.rand() < 0.5:
+                X, y, y_mix, lam = mixup(X, y, alpha=0.5)
+                mixed = True
+            else:
+                y_mix, lam = None, None
+
             pred, _ = model(X, None)  # MultiResidualBiGRU exp007
 
             loss = criterion(mean_std_normalize_label(pred), y)
+            if mixed and y_mix is not None and lam is not None:
+                loss_mixed = criterion(mean_std_normalize_label(pred), y_mix)
+                loss = loss * lam + loss_mixed * (1 - lam)
+
             scaler.scale(loss).backward()  # type: ignore
             scaler.step(optimizer)
             scaler.update()

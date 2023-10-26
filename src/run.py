@@ -236,6 +236,7 @@ class Runner:
         chunk_size: int,
         min_interval: int = 30,
     ) -> dict[str, np.ndarray | float | pd.DataFrame]:
+        print("Infer ChunkSize => ", chunk_size)
         device = self.device
         pbar = tqdm(enumerate(dl), total=len(dl), dynamic_ncols=True, leave=True)
         onset_losses = AverageMeter("onset_loss")
@@ -346,7 +347,6 @@ class Runner:
             criterion = None
             losses_meter = None
 
-        print("ChunkSize => ", self.config.infer_chunk_size)
         outs = self._make_sub_v3(
             model, dl, criterion, losses_meter, chunk_size=self.config.infer_chunk_size
         )

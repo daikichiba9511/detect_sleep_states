@@ -55,7 +55,7 @@ class Config:
     model_type: str = "MultiResidualBiGRU"
     # input_size: int = 18
     input_size: int = 10
-    hidden_size: int = 64
+    hidden_size: int = 64 * 4
     model_size: int = 128
     linear_out: int = 128
     out_size: int = 2

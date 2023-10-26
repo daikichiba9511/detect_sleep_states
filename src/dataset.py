@@ -603,9 +603,10 @@ class SleepDatasetV3(Dataset):
         self.downsample_factor = downsample_factor
         self.w_sigma = w_sigma
         self.seq_len = seq_len
+        self.sample_per_epoch = 20000
 
     def __len__(self) -> int:
-        return len(self.data)
+        return self.sample_per_epoch if self.phase == "train" else len(self.data)
 
     def downsample_and_create_feats(self, feat: np.ndarray, downsample_factor: int):
         # downsample
@@ -696,13 +697,49 @@ class SleepDatasetV3(Dataset):
         return y
 
     def __getitem__(self, index: int):
+        if self.phase == "test":
+            data_i = self.data[index][["anglez", "enmo"]].to_numpy()
+            sid = self.ids[index]
+            step = self.data[index]["step"].to_numpy().astype(int)
+            # step = step[:: self.downsample_factor]
+
+            X = np.concatenate(
+                [
+                    self.downsample_and_create_feats(
+                        data_i[:, i], self.downsample_factor
+                    )
+                    for i in range(data_i.shape[-1])
+                ],
+                axis=-1,
+            )
+            X = torch.from_numpy(X).float()
+            return X, -np.inf, sid, step
+
+        if self.phase == "valid":
+            data_i = self.data[index][["anglez", "enmo"]].to_numpy()
+            sid = self.ids[index]
+            step = self.data[index]["step"].to_numpy().astype(int)
+            # step = step[:: self.downsample_factor]
+
+            X = np.concatenate(
+                [
+                    self.downsample_and_create_feats(
+                        data_i[:, i], self.downsample_factor
+                    )
+                    for i in range(data_i.shape[-1])
+                ],
+                axis=-1,
+            )
+            X = torch.from_numpy(X).float()
+            y = self._make_label(data_i, index)
+            return X, y, sid, step
+
         # バッチ内に同じseries_idが固まらないようにする
         index_ = np.random.randint(0, len(self.data))
         data_i = self.data[index_][["anglez", "enmo"]].to_numpy()
-        sid = self.ids[index]
-        step = self.data[index]["step"].to_numpy().astype(int)
+        sid = self.ids[index_]
+        step = self.data[index_]["step"].to_numpy().astype(int)
         step = step[:: self.downsample_factor]
-
         X = np.concatenate(
             [
                 self.downsample_and_create_feats(data_i[:, i], self.downsample_factor)
@@ -711,14 +748,8 @@ class SleepDatasetV3(Dataset):
             axis=-1,
         )
         X = torch.from_numpy(X).float()
-
-        if self.phase == "test":
-            return X, -np.inf, sid, step
-        y = self._make_label(data_i, index)
-        if self.phase == "valid":
-            return X, y, sid, step
-
         # random sampling
+        y = self._make_label(data_i, index_)
         start = np.random.randint(0, len(X) - self.seq_len)
         X = X[start : start + self.seq_len]
         y = y[start : start + self.seq_len]
@@ -784,7 +815,7 @@ def build_dataloader_v3(
             sigma=config.sigma,
             downsample_factor=config.downsample_factor,
             w_sigma=config.w_sigma,
-            seq_len=config.infer_seq_len,
+            # seq_len=config.infer_seq_len,
         )
         dl_test = DataLoader(
             ds_test,
@@ -825,7 +856,7 @@ def build_dataloader_v3(
             sigma=config.sigma,
             downsample_factor=config.downsample_factor,
             w_sigma=config.w_sigma,
-            seq_len=config.infer_seq_len,
+            # seq_len=config.infer_seq_len,
         )
         dl_valid = DataLoader(
             ds_valid,

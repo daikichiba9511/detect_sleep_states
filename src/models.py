@@ -113,15 +113,26 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
         self.out_size = out_size
         self.n_layers = n_layers
 
-        self.conv1d_ks3 = create_conv1dnn(seq_len, hidden_size, 3)
-        self.conv1d_ks5 = create_conv1dnn(seq_len, hidden_size, 5)
-        self.conv1d_ks7 = create_conv1dnn(seq_len, hidden_size, 7)
-        self.conv1d_ks9 = create_conv1dnn(1192, seq_len, 9)
+        self.mlp_in = nn.Sequential(
+            nn.Linear(input_size, hidden_size * 2),
+            nn.LayerNorm(hidden_size * 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.ReLU(),
+        )
+
+        self.conv1d_ks3 = create_conv1dnn(hidden_size, hidden_size, 3)
+        self.conv1d_ks5 = create_conv1dnn(hidden_size, hidden_size, 5)
+        self.conv1d_ks7 = create_conv1dnn(hidden_size, hidden_size, 7)
 
         self.res_bigrus = nn.ModuleList(
-            [ResidualBiGRU(10, n_layers=1, bidir=bidir) for _ in range(n_layers)]
+            [
+                ResidualBiGRU(hidden_size, n_layers=1, bidir=bidir)
+                for _ in range(n_layers)
+            ]
         )
-        self.fc_out = nn.Linear(10, out_size)
+        self.fc_out = nn.Linear(hidden_size, out_size)
 
     def forward(self, x: torch.Tensor, h=None) -> tuple[torch.Tensor, list]:
         # if we are at the beginning of a sequence (no hidden state)
@@ -129,6 +140,7 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
             # (re)initialize the hidden state
             h = [None for _ in range(self.n_layers)]
 
+        x = self.mlp_in(x)
         # x: (bs, seq_len, n_feats)
         x = torch.cat(
             [self.conv1d_ks3(x), self.conv1d_ks5(x), self.conv1d_ks7(x), x], dim=1
@@ -138,9 +150,7 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
             x, new_hi = res_bigru(x, h[i])
             new_h.append(new_hi)
 
-        # (BS, 1192, n_feats) -> (BS, seq_len, n_feats)
-        x = self.conv1d_ks9(x)
-        # (BS, seq_len, n_feats) -> (BS, seq_len, out_size
+        # (BS, seq_len, n_feats) -> (BS, seq_len, out_size)
         x = self.fc_out(x)
         return x, new_h  # log probabilities + hidden states
 

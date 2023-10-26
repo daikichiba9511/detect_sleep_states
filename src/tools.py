@@ -23,6 +23,17 @@ from src.utils import seed_everything
 logger = getLogger(__name__)
 
 
+def mixup(
+    x: torch.Tensor, y: torch.Tensor, alpha: float = 1.0
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    lam = np.random.beta(-alpha, alpha)
+    batch_size = x.size()[0]
+    rand_index = torch.randperm(batch_size).to(x.device)
+    mixed_x = lam * x + (1 - lam) * x[rand_index, :]
+    y_a, y_b = y, y[rand_index]
+    return mixed_x, y_a, y_b, lam
+
+
 class AverageMeter:
     """Computes and stores the average and current value"""
 
