@@ -24,14 +24,15 @@ logger = getLogger(__name__)
 
 
 def mixup(
-    x: torch.Tensor, y: torch.Tensor, alpha: float = 1.0
+    x: torch.Tensor, y: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
-    lam = np.random.beta(-alpha, alpha)
-    batch_size = x.size()[0]
-    rand_index = torch.randperm(batch_size).to(x.device)
-    mixed_x = lam * x + (1 - lam) * x[rand_index, :]
-    y_a, y_b = y, y[rand_index]
-    return mixed_x, y_a, y_b, lam
+    rand_index = torch.randperm(x.size(0)).to(x.device)
+    shuffled_x = x[rand_index]
+    shuffled_y = y[rand_index]
+
+    lam = np.random.uniform(0.0, 1.0)
+    x_mix = lam * x + (1 - lam) * shuffled_x
+    return x_mix, y, shuffled_y, lam
 
 
 class AverageMeter:

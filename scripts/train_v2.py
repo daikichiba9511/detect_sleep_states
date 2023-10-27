@@ -56,17 +56,19 @@ def train_one_epoch_v3(
 
             mixed = False
             if np.random.rand() < 0.5:
-                X, y, y_mix, lam = mixup(X, y, alpha=0.5)
+                X, y, y_mix, lam = mixup(X, y)
                 mixed = True
             else:
                 y_mix, lam = None, None
 
             pred, _ = model(X, None)  # MultiResidualBiGRU exp007
+            normalized_pred = mean_std_normalize_label(pred)
 
-            loss = criterion(mean_std_normalize_label(pred), y)
+            loss = criterion(normalized_pred, y)
             if mixed and y_mix is not None and lam is not None:
-                loss_mixed = criterion(mean_std_normalize_label(pred), y_mix)
-                loss = loss * lam + loss_mixed * (1 - lam)
+                loss_mixed = criterion(normalized_pred, y_mix)
+                loss *= lam
+                loss += loss_mixed * (1 - lam)
 
             scaler.scale(loss).backward()  # type: ignore
             scaler.step(optimizer)

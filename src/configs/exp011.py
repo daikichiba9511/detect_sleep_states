@@ -3,9 +3,9 @@ from typing import Any
 
 
 class Config:
-    name: str = "exp010"
+    name: str = "exp011"
     desc: str = """
-    exp009 + mixup
+    exp010 + train_seq_len=24*60*2
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -24,7 +24,7 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 2
-    batch_size: int = 64
+    batch_size: int = 8 * 6
     num_workers: int = 16
 
     criterion_type: str = "MSELoss"
@@ -65,7 +65,7 @@ class Config:
     # Used in train_one_epoch_v2, valid_one_epoch_v2
     train_chunk_size: int = 24 * 60  # 1hour
     infer_chunk_size: int = 24 * 60 * 100  # 100hour
-    train_seq_len: int = 24 * 60  # 1hour => 1440
+    train_seq_len: int = 24 * 60 * 2  # 1hour => 1440
     # infer_seq_len: int = 24 * 60 * 6  # 6hour
     series_save_dir: Path = root_dir / "output" / "series"
     series_save_dir.mkdir(exist_ok=True, parents=True)

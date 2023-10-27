@@ -825,6 +825,7 @@ def build_dataloader_v3(
             pin_memory=True,
             drop_last=False,
             # collate_fn=collate_fn,
+            persistent_workers=True,  # data loaderが使い終わったProcessをkillしない
         )
         return dl_test
     elif phase == "valid":
@@ -866,6 +867,7 @@ def build_dataloader_v3(
             pin_memory=True,
             drop_last=False,
             # collate_fn=collate_fn,
+            persistent_workers=True,  # data loaderが使い終わったProcessをkillしない
         )
         return dl_valid
     else:
@@ -911,6 +913,7 @@ def build_dataloader_v3(
             drop_last=True,
             worker_init_fn=lambda _: seed_everything(config.seed),
             # collate_fn=collate_fn,
+            persistent_workers=True,  # data loaderが使い終わったProcessをkillしない
         )
         return dl_train
 
