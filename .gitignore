@@ -8,4 +8,4 @@ __pycache__
 *.pyi
 metadata.json
 submission.csv
-
+*.bin

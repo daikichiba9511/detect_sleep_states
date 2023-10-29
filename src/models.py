@@ -123,16 +123,16 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
         )
 
         self.conv1d_ks3 = create_conv1dnn(hidden_size, hidden_size, 3)
-        self.conv1d_ks5 = create_conv1dnn(hidden_size, hidden_size, 5)
         self.conv1d_ks7 = create_conv1dnn(hidden_size, hidden_size, 7)
+        self.conv1d_ks12 = create_conv1dnn(hidden_size, hidden_size, 11)
 
         self.res_bigrus = nn.ModuleList(
             [
-                ResidualBiGRU(hidden_size, n_layers=1, bidir=bidir)
+                ResidualBiGRU(hidden_size * 4, n_layers=1, bidir=bidir)
                 for _ in range(n_layers)
             ]
         )
-        self.fc_out = nn.Linear(hidden_size, out_size)
+        self.fc_out = nn.Linear(hidden_size * 4, out_size)
 
     def forward(self, x: torch.Tensor, h=None) -> tuple[torch.Tensor, list]:
         # if we are at the beginning of a sequence (no hidden state)
@@ -140,11 +140,22 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
             # (re)initialize the hidden state
             h = [None for _ in range(self.n_layers)]
 
+        # (BS, seq_len, n_feats) -> (BS, seq_len, hidden_size)
         x = self.mlp_in(x)
-        # x: (bs, seq_len, n_feats)
+        # (BS, seq_len, hidden_size) -> (BS, hidden_size, seq_len)
+        x = x.transpose(1, 2)
+        # x: (bs, seq_len * 3, n_feats)
         x = torch.cat(
-            [self.conv1d_ks3(x), self.conv1d_ks5(x), self.conv1d_ks7(x), x], dim=1
+            [
+                self.conv1d_ks3(x),
+                self.conv1d_ks7(x),
+                self.conv1d_ks12(x),
+                x,
+            ],
+            dim=1,
         )
+        x = x.transpose(1, 2)
+
         new_h = []
         for i, res_bigru in enumerate(self.res_bigrus):
             x, new_hi = res_bigru(x, h[i])
@@ -315,25 +326,28 @@ def test_run_model2():
 
 
 def test_run_model3():
+    import memray
+
     print("Test3")
     model = MultiResidualBiGRUMultiKSConv1D(
-        input_size=10, hidden_size=64, out_size=2, n_layers=5
+        input_size=10, hidden_size=256, out_size=2, n_layers=5
     )
     model = model.train()
 
     max_chunk_size = 10
     seq_len = 1000
-    bs = 1
+    bs = 8 * 2
     x = torch.randn(bs, seq_len, max_chunk_size)
     print(x.shape)
     h = None
-    p, h = model(x, h)
-    print("pred: ", p.shape)
-    print(len(h))
-    print([h_i.shape for h_i in h])
+    with memray.Tracker("model_forwad.bin"):
+        p, h = model(x, h)
+        print("pred: ", p.shape)
+        print(len(h))
+        print([h_i.shape for h_i in h])
 
 
 if __name__ == "__main__":
-    test_run_model()
+    # test_run_model()
     # test_run_model2()
     test_run_model3()

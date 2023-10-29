@@ -693,7 +693,7 @@ class SleepDatasetV3(Dataset):
                 for i in range(y.shape[-1])
             ]
         )[0]
-        y = mean_std_normalize_label(torch.from_numpy(y).float())
+        y = mean_std_normalize_label(torch.tensor(y).float())
         return y
 
     def __getitem__(self, index: int):
@@ -747,14 +747,25 @@ class SleepDatasetV3(Dataset):
             ],
             axis=-1,
         )
-        X = torch.from_numpy(X).float()
+        X = torch.tensor(X).float()
         # random sampling
         y = self._make_label(data_i, index_)
-        start = np.random.randint(0, len(X) - self.seq_len)
-        X = X[start : start + self.seq_len]
-        y = y[start : start + self.seq_len]
-        step = step[start : start + self.seq_len]
-        assert len(X) == len(y) == len(step), f"{len(X)}, {len(y)}, {len(step)}"
+
+        start = np.random.randint(low=0, high=max(1, len(X) - self.seq_len))
+        end = min(start + self.seq_len, len(X))
+        X = X[start:end]
+        if len(X) < self.seq_len:
+            X = torch.cat([X, torch.zeros(self.seq_len - len(X), X.shape[-1])], dim=0)
+        y = y[start:end]
+        if len(y) < self.seq_len:
+            y = torch.cat([y, torch.zeros(self.seq_len - len(y), y.shape[-1])], dim=0)
+
+        step = step[start:end]
+        if len(step) < self.seq_len:
+            step = np.concatenate(
+                [step, np.zeros(self.seq_len - len(step), dtype=int)], axis=0
+            )
+
         return X, y, sid, step
 
 
