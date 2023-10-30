@@ -1,10 +1,10 @@
 import importlib
 from logging import getLogger
-from typing import Any, Callable
+from typing import Callable
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import polars as pl
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -14,22 +14,22 @@ from src.tools import AverageMeter
 from src.dataset import build_dataloader_v3, mean_std_normalize_label
 from src.losses import build_criterion
 from src.models import build_model
-from src.tools import AverageMeter
+from src import utils as my_utils
 
 logger = getLogger(__name__)
 
 
 class Runner:
     def __init__(
-        self, config, dataconfig, is_val: bool = False, device: str = "cuda"
+        self, configs, dataconfig, is_val: bool = False, device: str = "cuda"
     ) -> None:
         self.is_val = is_val
-        self.config = config
+        self.configs = configs
         self.dataconfig = dataconfig
         self.device = torch.device(device)
 
     def _init_dl(self, debug: bool = False, fold: int = 0) -> DataLoader:
-        print("Debug mode:", debug)
+        logger.info("Debug mode: %s", debug)
         if self.is_val:
             dl = build_dataloader_v3(self.dataconfig, fold, "valid", debug)
             return dl
@@ -37,10 +37,9 @@ class Runner:
             dl = build_dataloader_v3(self.dataconfig, fold, "test", debug)
             return dl
 
-    def _init_model(self) -> nn.Module:
-        model = build_model(self.config)
-        weight_path = self.config.model_save_path
-        logger.info(f"load: {weight_path}")
+    def _init_model(self, config, weight_path: str | Path) -> nn.Module:
+        model = build_model(config)
+        logger.info("load: %s", weight_path)
         state_dict = torch.load(weight_path)
         print(model.load_state_dict(state_dict))
         model = model.to(self.device).eval()
@@ -228,7 +227,7 @@ class Runner:
 
     def _make_sub_v3(
         self,
-        model: nn.Module,
+        models: list[nn.Module],
         dl: DataLoader,
         criterion: Callable | None,
         losses: AverageMeter | None,
@@ -237,7 +236,6 @@ class Runner:
         min_interval: int = 30,
     ) -> dict[str, np.ndarray | float | pd.DataFrame]:
         print("Infer ChunkSize => ", chunk_size)
-        device = self.device
         pbar = tqdm(enumerate(dl), total=len(dl), dynamic_ncols=True, leave=True)
         onset_losses = AverageMeter("onset_loss")
         wakeup_losses = AverageMeter("wakeup_loss")
@@ -246,11 +244,17 @@ class Runner:
             with torch.inference_mode():
                 # (BS, seq_len, 2)
                 sid = batch[2]
-                pred = self._make_pred_v3(model, batch, chunk_size)
+                pred = []
+                for i, model in enumerate(models):
+                    pred_ = self._make_pred_v3(model, batch, chunk_size)
+                    pred.append(pred_.detach().cpu().float())
+
+                pred = torch.concat(pred)
+                pred = pred.mean(0).unsqueeze(0)
 
                 if criterion is not None and losses is not None:
                     normalized_pred = mean_std_normalize_label(pred)
-                    y = batch[1].to(device, non_blocking=True)
+                    y = batch[1].to(normalized_pred.device, non_blocking=True)
                     loss = criterion(normalized_pred, y)
                     loss_onset = (
                         criterion(normalized_pred[..., 0], y[..., 0]).detach().cpu()
@@ -338,18 +342,28 @@ class Runner:
         return outputs
 
     def run(self, debug: bool = False, fold: int = 0) -> pd.DataFrame:
-        model = self._init_model()
+        models = []
+        for config in self.configs:
+            model = self._init_model(config, config.model_save_path)
+            models.append(model)
+
         dl = self._init_dl(debug, fold)
         if self.is_val:
-            criterion = build_criterion(self.config.criterion_type)
+            criterion_type = "MSELoss"
+            logger.info("Criterion: %s", criterion_type)
+            criterion = build_criterion(criterion_type)
             losses_meter = AverageMeter("loss")
         else:
             criterion = None
             losses_meter = None
 
-        outs = self._make_sub_v3(
-            model, dl, criterion, losses_meter, chunk_size=self.config.infer_chunk_size
-        )
+        chunk_size = self.configs[0].infer_chunk_size
+
+        with my_utils.timer("start inference"):
+            outs = self._make_sub_v3(
+                models, dl, criterion, losses_meter, chunk_size=chunk_size
+            )
+
         # submission = self._make_sub(outs)
         submission = outs["submission"]
         assert isinstance(submission, pd.DataFrame)
@@ -362,6 +376,6 @@ class Runner:
 if __name__ == "__main__":
     config = "exp005"
     config = importlib.import_module(f"src.configs.{config}").Config
-    runner = Runner(config=config, dataconfig=config, is_val=False)
+    runner = Runner(configs=[config], dataconfig=config, is_val=False)
     submission = runner.run(debug=True, fold=0)
     print(submission)

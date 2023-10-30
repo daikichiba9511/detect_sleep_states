@@ -793,7 +793,7 @@ class DataloaderConfigV3(Protocol):
     target_series_uni_ids_path: Path
 
     train_seq_len: int
-    infer_seq_len: int
+    # infer_seq_len: int
 
 
 def build_dataloader_v3(

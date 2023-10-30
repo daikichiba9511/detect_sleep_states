@@ -344,6 +344,7 @@ class TrainConfig(Protocol):
 
     series_dir: Path
     target_series_uni_ids_path: Path
+    train_seq_len: int
 
 
 def train_one_fold(
@@ -353,10 +354,13 @@ def train_one_fold(
     train_one_epoch: Callable = train_one_epoch,
     valid_one_epoch: Callable = valid_one_epoch,
     log_interval: int = 1,
+    model_compile: bool = True,
 ) -> None:
     logger.info(f"Start training fold{fold}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(config).to(device)
+    if model_compile:
+        model = torch.compile(model, mode="default")
 
     model_params = list(model.named_parameters())
     no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]

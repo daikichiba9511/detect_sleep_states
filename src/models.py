@@ -6,7 +6,13 @@ import torch.nn.functional as F
 
 
 class ResidualBiGRU(nn.Module):
-    def __init__(self, hidden_size, n_layers=1, bidir=True):
+    def __init__(
+        self,
+        hidden_size: int,
+        n_layers: int = 1,
+        bidir: bool = True,
+        dropout: float = 0.0,
+    ) -> None:
         super(ResidualBiGRU, self).__init__()
 
         self.hidden_size = hidden_size
@@ -18,6 +24,7 @@ class ResidualBiGRU(nn.Module):
             n_layers,
             batch_first=True,
             bidirectional=bidir,
+            dropout=dropout,
         )
         dir_factor = 2 if bidir else 1
         self.fc1 = nn.Linear(hidden_size * dir_factor, hidden_size * dir_factor * 2)
@@ -44,6 +51,22 @@ class ResidualBiGRU(nn.Module):
 
 
 class MultiResidualBiGRU(nn.Module):
+    """ResidualBiGRUを複数重ねた系列モデル
+
+    Attributes:
+        input_size: input feature size
+        hidden_size: hidden feature size
+        out_size: output feature size
+        n_layers: number of layers of ResidualBiGRU
+
+        fc_in: (bs, seq_len, input_size) -> (bs, seq_len, hidden_size)
+        ln: LayerNorm
+        res_bigrus: list of ResidualBiGRU
+        fc_out: (bs, seq_len, hidden_size) -> (bs, seq_len, out_size)
+
+    References:
+    """
+
     def __init__(
         self,
         input_size: int,
@@ -51,6 +74,7 @@ class MultiResidualBiGRU(nn.Module):
         out_size: int,
         n_layers: int,
         bidir: bool = True,
+        dropuot: float = 0.0,
     ) -> None:
         super(MultiResidualBiGRU, self).__init__()
 
@@ -63,7 +87,7 @@ class MultiResidualBiGRU(nn.Module):
         self.ln = nn.LayerNorm(hidden_size)
         self.res_bigrus = nn.ModuleList(
             [
-                ResidualBiGRU(hidden_size, n_layers=1, bidir=bidir)
+                ResidualBiGRU(hidden_size, n_layers=1, bidir=bidir, dropout=dropuot)
                 for _ in range(n_layers)
             ]
         )
@@ -104,7 +128,8 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
         out_size: int,
         n_layers: int,
         bidir: bool = True,
-        seq_len: int = 1000,
+        gru_n_layers: int = 1,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -128,7 +153,9 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
 
         self.res_bigrus = nn.ModuleList(
             [
-                ResidualBiGRU(hidden_size * 4, n_layers=1, bidir=bidir)
+                ResidualBiGRU(
+                    hidden_size * 4, n_layers=gru_n_layers, bidir=bidir, dropout=dropout
+                )
                 for _ in range(n_layers)
             ]
         )
@@ -168,6 +195,10 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
 
 class SleepRNNMocel(nn.Module):
     """
+
+    Attributes:
+        num_linear: (bs, seq_len, num_feats) -> (bs, seq_len, num_linear_size)
+
     Refs:
     [1] https://github.com/TakoiHirokazu/Kaggle-Parkinsons-Freezing-of-Gait-Prediction/blob/main/takoi/exp/ex143_tdcsfog_gru.ipynb
     """
@@ -272,7 +303,6 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             out_size=config.out_size,
             n_layers=config.n_layers,
             bidir=config.bidir,
-            seq_len=config.seq_len,
         )
         return model
 
@@ -280,7 +310,7 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
         raise NotImplementedError
 
 
-def test_run_model():
+def _test_run_model():
     print("Test1")
     model = MultiResidualBiGRU(input_size=10, hidden_size=64, out_size=2, n_layers=5)
     model = model.train()
@@ -296,7 +326,7 @@ def test_run_model():
     print([h_i.shape for h_i in h])
 
 
-def test_run_model2():
+def _test_run_model2():
     print("Test2")
     num_feats = 8
 
@@ -325,9 +355,7 @@ def test_run_model2():
     print("pred: ", p.shape)
 
 
-def test_run_model3():
-    import memray
-
+def _test_run_model3():
     print("Test3")
     model = MultiResidualBiGRUMultiKSConv1D(
         input_size=10, hidden_size=256, out_size=2, n_layers=5
@@ -335,12 +363,24 @@ def test_run_model3():
     model = model.train()
 
     max_chunk_size = 10
-    seq_len = 1000
+    seq_len = 3000
     bs = 8 * 2
     x = torch.randn(bs, seq_len, max_chunk_size)
     print(x.shape)
     h = None
-    with memray.Tracker("model_forwad.bin"):
+
+    profile = False
+    if profile:
+        import os
+        import memray
+
+        os.remove("./model_forwad.bin")
+        with memray.Tracker("model_forwad.bin"):
+            p, h = model(x, h)
+            print("pred: ", p.shape)
+            print(len(h))
+            print([h_i.shape for h_i in h])
+    else:
         p, h = model(x, h)
         print("pred: ", p.shape)
         print(len(h))
@@ -348,6 +388,6 @@ def test_run_model3():
 
 
 if __name__ == "__main__":
-    # test_run_model()
-    # test_run_model2()
-    test_run_model3()
+    # _test_run_model()
+    # _test_run_model2()
+    _test_run_model3()

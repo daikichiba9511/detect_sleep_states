@@ -3,9 +3,9 @@ from typing import Any
 
 
 class Config:
-    name: str = "exp012"
+    name: str = "exp013"
     desc: str = """
-    exp010 + train_seq_len=24*60*5
+    exp012 + MultiResidualBiGRUMultiKSConv1D
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -24,7 +24,7 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 2
-    batch_size: int = 8 * 2
+    batch_size: int = 8 * 1
     num_workers: int = 16
 
     criterion_type: str = "MSELoss"
@@ -52,10 +52,10 @@ class Config:
     test_series_path: str | Path = data_dir / "test_series.parquet"
 
     # Used in build_model
-    model_type: str = "MultiResidualBiGRU"
+    model_type: str = "MultiResidualBiGRUMultiKSConv1D"
     # input_size: int = 18
     input_size: int = 10
-    hidden_size: int = 64 * 4
+    hidden_size: int = 64 * 2
     model_size: int = 128
     linear_out: int = 128
     out_size: int = 2

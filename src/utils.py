@@ -78,7 +78,9 @@ def measure_fn(logger=logger.info):
 def timer(name, log_fn=logger.info):
     t0 = time.time()
     yield
-    log_fn(f"[{name}] done in {time.time() - t0:.3f} s")
+    log_fn(
+        "[{name}] done in {duration:.3f} s".format(name=name, duration=time.time() - t0)
+    )
 
 
 def get_commit_head_hash() -> str:

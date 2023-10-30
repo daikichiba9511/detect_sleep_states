@@ -48,7 +48,7 @@ test: ## run test with pytest
 	@rye run pytest -c tests
 
 .PHONY: clean
-clean:
+clean: ## clean outputs
 	@rm -rf ./output/*
 	@rm -rf ./wandb
 	@rm -rf ./debug
@@ -60,7 +60,7 @@ train: ## train model
 		--config $(CONFIG)
 
 .PHONY: train2
-train2: ## train model
+train2: ## train model by train_v2.py
 	@PYTHONPATH=${PYTHONPATH} rye run python scripts/train_v2.py \
 		--config $(CONFIG)
 
@@ -73,7 +73,7 @@ train-all: ## train model with 5-fold
 	done
 
 .PHONY: train2-all
-train2-all: ## train model with 5-fold
+train2-all: ## train model 2 with 5-fold
 	@for i in {0..4}; do \
 		PYTHONPATH=${PYTHONPATH} rye run python scripts/train_v2.py \
 			--config $(CONFIG) \
@@ -93,13 +93,19 @@ train2-debug: ## debug of train.py
 		--debug
 
 .PHONY: cv
-cv:
+cv: # caluculate cv score with 1-fold
 	@PYTHONPATH=${PYTHONPATH} rye run python scripts/cv.py \
 		--config $(CONFIG) \
 		--fold $(FOLD)
 
 .PHONY: cv
-cv-all:
+cv-all-fold: # caluculate cv score with all fold at once
+	@PYTHONPATH=${PYTHONPATH} rye run python scripts/cv.py \
+		--config $(CONFIG) \
+		--all
+
+.PHONY: cv
+cv-all: # caluculate cv score with 5-fold
 	@for i in {0..4}; do \
 		PYTHONPATH=${PYTHONPATH} rye run python scripts/cv.py \
 			--config $(CONFIG) \

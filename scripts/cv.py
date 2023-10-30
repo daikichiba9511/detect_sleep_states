@@ -11,6 +11,7 @@ from src.metrics import column_names, score, tolerances
 from src.run import Runner
 from src.utils import LoggingUtils, get_class_vars
 from tqdm.auto import tqdm
+import copy
 
 logger = LoggingUtils.get_stream_logger(20)
 
@@ -20,6 +21,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--config", type=str, default="exp000")
 parser.add_argument("--debug", action="store_true")
 parser.add_argument("--fold", type=int, default=0)
+parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--all", default=False, action="store_true")
 args = parser.parse_args()
 
 config = importlib.import_module(f"src.configs.{args.config}").Config
@@ -44,8 +47,21 @@ df_valid_solution = df_valid_events.filter(
 df_valid_solution = df_valid_solution[~df_valid_solution["step"].isnull()]
 print(df_valid_solution)
 
-runner = Runner(config=config, dataconfig=config, is_val=True)
-submission = runner.run(debug=args.debug, fold=args.fold)
+configs = []
+if args.all:
+    for fold in range(5):
+        config_ = copy.deepcopy(config)
+        config_.fold = fold
+        config_.model_save_path = (
+            config_.output_dir / f"{config_.name}_model_fold{fold}.pth"
+        )
+        configs.append(config_)
+else:
+    configs.append(config)
+
+submission = Runner(configs=configs, dataconfig=config, is_val=True, device="cpu").run(
+    debug=args.debug, fold=args.fold
+)
 print(submission)
 submission.to_csv("submission.csv", index=False)
 
