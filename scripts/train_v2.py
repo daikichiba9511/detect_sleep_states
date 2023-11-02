@@ -61,7 +61,8 @@ def train_one_epoch_v3(
             else:
                 y_mix, lam = None, None
 
-            pred, _ = model(X, None)  # MultiResidualBiGRU exp007
+            # pred, _ = model(X, None)  # MultiResidualBiGRU exp007
+            pred = model(X, True)  # SleepTransformer
             normalized_pred = mean_std_normalize_label(pred)
 
             loss = criterion(normalized_pred, y)
@@ -114,7 +115,8 @@ def valid_one_epoch_v3(
             X = batch[0].to(device, non_blocking=True)
             # (BS, seq_len, 2)
             y = batch[1].to(device, non_blocking=True)
-            pred, _ = model(X, None)  # MultiResidualBiGRU exp007
+            # pred, _ = model(X, None)  # MultiResidualBiGRU exp007
+            pred = model(X, False)  # SleepTransformer
             # logits, h = model(x_chunk, h)  # MultiResidualBiGRU
             normalized_pred = mean_std_normalize_label(pred)
             loss = criterion(normalized_pred, y)

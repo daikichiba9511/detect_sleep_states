@@ -139,15 +139,16 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
         self.n_layers = n_layers
 
         self.mlp_in = nn.Sequential(
-            # nn.Linear(input_size, hidden_size * 2),
-            # nn.LayerNorm(hidden_size * 2),
-            # nn.ReLU(),
-            # nn.Linear(hidden_size * 2, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            # nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(input_size, hidden_size * 2),
+            nn.LayerNorm(hidden_size * 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size * 2, hidden_size),
             nn.LayerNorm(hidden_size),
             nn.ReLU(),
+            # -- epx018
+            # nn.Linear(input_size, hidden_size),
+            # nn.LayerNorm(hidden_size),
+            # nn.ReLU(),
         )
 
         self.conv1d_ks3 = create_conv1dnn(hidden_size, hidden_size, 3)
@@ -231,10 +232,14 @@ class TransformerEncoderLayer(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # print("Enc 1: x.shape", x.shape)
         attn_out, attn_weights = self.mha(x, x, x)
         x = self.ln1(x + attn_out)
+        # print("Enc 2: x.shape", x.shape)
         x = x + self.seq(x)
+        # print("Enc 3: x.shape", x.shape)
         x = self.ln2(x)
+        # print("Enc 4: x.shape", x.shape)
         return x
 
 
@@ -270,11 +275,82 @@ class SleepTransformerEncoder(nn.Module):
             for _ in range(num_encoder_layers)
         ]
         self.lstm_layers = [
-            nn.LSTM(model_dim, model_dim, bidirectional=True, batch_first=True)
+            nn.LSTM(model_dim, model_dim // 2, bidirectional=True, batch_first=True)
             for _ in range(num_lstm_layers)
         ]
         self.seq_len = seq_len
-        self.pos_encoding = nn.Parameter()
+        self.pos_encoding = nn.Parameter(
+            torch.normal(mean=0, std=0.02, size=(1, self.seq_len, model_dim)),
+            requires_grad=True,
+        )
+
+    def forward(self, x: torch.Tensor, training: bool = False) -> torch.Tensor:
+        """
+        Args:
+            x: (bs, seq_len, model_dim)
+
+        Returns:
+            x: (bs, seq_len, model_dim)
+        """
+        bs, _, _ = x.shape
+        x = self.first_linear(x)
+        if training:
+            # augmentation by randomly roll of the position encoding tensor
+            tile = torch.tile(self.pos_encoding, dims=(bs, 1, 1))
+            shifts = tuple(
+                map(int, torch.randint(low=-self.seq_len, high=0, size=(bs,)))
+            )
+            random_pos_encoding = torch.roll(tile, shifts=shifts, dims=[1] * bs)
+            x = x + random_pos_encoding
+        else:
+            tile = torch.tile(self.pos_encoding, (bs, 1, 1))
+            x = x + tile
+
+        x = self.first_dropout(x)
+
+        # print(f"{x.shape =}")
+        for i in range(len(self.encoder_layers)):
+            x = self.encoder_layers[i](x)
+            # print(f"{i}: {x.shape =}")
+
+        for i in range(1, len(self.lstm_layers)):
+            # print(f"Lstm: 1 {i}: {x.shape =}")
+            x, _ = self.lstm_layers[i](x)
+            # print(f"Lstm: 2 {i}: {x.shape =}")
+
+        return x
+
+
+class SleepTransformer(nn.Module):
+    def __init__(
+        self,
+        model_dim: int = 320,
+        dropout_rate: float = 0.2,
+        num_encoder_layers: int = 3,
+        num_lstm_layers: int = 3,
+        embed_dim: int = 128,
+        num_heads: int = 8,
+        seq_model_dim: int = 320,
+        seq_len: int = 3000,
+        out_dim: int = 2,
+    ):
+        super().__init__()
+        self.encoder = SleepTransformerEncoder(
+            model_dim=model_dim,
+            dropout_rate=dropout_rate,
+            num_encoder_layers=num_encoder_layers,
+            num_lstm_layers=num_lstm_layers,
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            seq_len=seq_len,
+            seq_model_dim=seq_model_dim,
+        )
+        self.fc = nn.Linear(model_dim, out_dim)
+
+    def forward(self, x: torch.Tensor, training: bool = False) -> torch.Tensor:
+        x = self.encoder(x, training=training)
+        x = self.fc(x)
+        return x
 
 
 class SleepRNNMocel(nn.Module):
@@ -360,6 +436,8 @@ class ModelConfig(Protocol):
     bidir: bool
     seq_len: int
 
+    train_seq_len: int
+
 
 def build_model(config: ModelConfig) -> torch.nn.Module:
     if config.model_type == "MultiResidualBiGRU":
@@ -387,6 +465,19 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             out_size=config.out_size,
             n_layers=config.n_layers,
             bidir=config.bidir,
+        )
+        return model
+    elif config.model_type == "SleepTransformer":
+        model = SleepTransformer(
+            model_dim=config.model_size,
+            dropout_rate=0.2,
+            num_encoder_layers=config.n_layers,
+            num_lstm_layers=config.n_layers,
+            embed_dim=config.model_size,
+            num_heads=2,
+            seq_model_dim=config.model_size,
+            seq_len=config.train_seq_len,
+            out_dim=config.out_size,
         )
         return model
 
@@ -471,7 +562,31 @@ def _test_run_model3():
         print([h_i.shape for h_i in h])
 
 
+def _test_run_model4():
+    print("Test3")
+    model = SleepTransformer(
+        model_dim=10,
+        dropout_rate=0.2,
+        num_encoder_layers=3,
+        num_lstm_layers=3,
+        embed_dim=10,
+        num_heads=2,
+        seq_model_dim=10,
+        seq_len=3000,
+    )
+    model = model.train()
+
+    max_chunk_size = 10
+    seq_len = 3000
+    bs = 8 * 2
+    x = torch.randn(bs, seq_len, max_chunk_size)
+    print(x.shape)
+    p = model(x, True)
+    print("pred: ", p.shape)
+
+
 if __name__ == "__main__":
     # _test_run_model()
     # _test_run_model2()
-    _test_run_model3()
+    # _test_run_model3()
+    _test_run_model4()
