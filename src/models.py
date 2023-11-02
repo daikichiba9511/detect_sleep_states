@@ -139,10 +139,13 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
         self.n_layers = n_layers
 
         self.mlp_in = nn.Sequential(
-            nn.Linear(input_size, hidden_size * 2),
-            nn.LayerNorm(hidden_size * 2),
-            nn.ReLU(),
-            nn.Linear(hidden_size * 2, hidden_size),
+            # nn.Linear(input_size, hidden_size * 2),
+            # nn.LayerNorm(hidden_size * 2),
+            # nn.ReLU(),
+            # nn.Linear(hidden_size * 2, hidden_size),
+            # nn.LayerNorm(hidden_size),
+            # nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
             nn.LayerNorm(hidden_size),
             nn.ReLU(),
         )
