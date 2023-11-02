@@ -23,6 +23,7 @@ parser.add_argument("--debug", action="store_true")
 parser.add_argument("--fold", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--all", default=False, action="store_true")
+parser.add_argument("--device", type=str, default="cuda")
 args = parser.parse_args()
 
 config = importlib.import_module(f"src.configs.{args.config}").Config
@@ -49,18 +50,29 @@ print(df_valid_solution)
 
 configs = []
 if args.all:
-    for fold in range(5):
-        config_ = copy.deepcopy(config)
-        config_.fold = fold
-        config_.model_save_path = (
-            config_.output_dir / f"{config_.name}_model_fold{fold}.pth"
-        )
-        configs.append(config_)
+    config = importlib.import_module(f"src.configs.{args.config}").Config
+    config_ = config()
+    config_.fold = args.fold
+    config_.model_save_path = (
+        config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+    )
+    # logger.info(
+    #     "model_path: {model_path}".format(model_path=config_.model_save_path)
+    # )
+    configs.append(copy.deepcopy(config_))
 else:
     configs.append(config)
 
-submission = Runner(configs=configs, dataconfig=config, is_val=True, device="cpu").run(
-    debug=args.debug, fold=args.fold
+print(f"len(configs): {len(configs)}")
+
+submission = Runner(
+    configs=configs,
+    dataconfig=configs[args.fold],
+    is_val=True,
+    device=args.device,
+).run(
+    debug=args.debug,
+    fold=args.fold,
 )
 print(submission)
 submission.to_csv("submission.csv", index=False)

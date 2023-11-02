@@ -582,6 +582,8 @@ class SleepDatasetV3(Dataset):
         sigma: int | None,
         w_sigma: float | None,
         seq_len: int = 1000,
+        random_sequence_mixing: bool = False,
+        sample_per_epoch: int = 20000,
     ):
         if phase not in ["train", "valid", "test"]:
             raise NotImplementedError
@@ -603,7 +605,8 @@ class SleepDatasetV3(Dataset):
         self.downsample_factor = downsample_factor
         self.w_sigma = w_sigma
         self.seq_len = seq_len
-        self.sample_per_epoch = 20000
+        self.sample_per_epoch = sample_per_epoch
+        self.random_sequence_mixing = random_sequence_mixing
 
     def __len__(self) -> int:
         return self.sample_per_epoch if self.phase == "train" else len(self.data)
@@ -734,6 +737,7 @@ class SleepDatasetV3(Dataset):
             y = self._make_label(data_i, index)
             return X, y, sid, step
 
+        # Train
         # バッチ内に同じseries_idが固まらないようにする
         index_ = np.random.randint(0, len(self.data))
         data_i = self.data[index_][["anglez", "enmo"]].to_numpy()
@@ -751,6 +755,50 @@ class SleepDatasetV3(Dataset):
         # random sampling
         y = self._make_label(data_i, index_)
 
+        # random sequence mixing
+        if self.random_sequence_mixing and np.random.rand() < 0.5:
+            # print("########## Random sequence mixing ##########")
+            index2_ = np.random.randint(0, len(self.data))
+            data2_i = self.data[index2_][["anglez", "enmo"]].to_numpy()
+            sid2 = self.ids[index2_]
+            step2 = self.data[index2_]["step"].to_numpy().astype(int)
+            step2 = step2[:: self.downsample_factor]
+            X2 = np.concatenate(
+                [
+                    self.downsample_and_create_feats(
+                        data2_i[:, i], self.downsample_factor
+                    )
+                    for i in range(data2_i.shape[-1])
+                ],
+                axis=-1,
+            )
+            X2 = torch.tensor(X2).float()
+            y2 = self._make_label(data2_i, index2_)
+
+            start1 = np.random.randint(low=0, high=max(1, len(X) - self.seq_len))
+            end1 = min(start1 + self.seq_len // 2, len(X))
+            start2 = np.random.randint(low=0, high=max(1, len(X) - self.seq_len))
+            end2 = min(start2 + self.seq_len // 2, len(X))
+
+            X = torch.cat([X[start1:end1], X2[start2:end2]], dim=0)
+            y = torch.cat([y[start1:end1], y2[start2:end2]], dim=0)
+            step = np.concatenate([step[start1:end1], step2[start2:end2]], axis=0)
+            if len(X) < self.seq_len:
+                X = torch.cat(
+                    [X, torch.zeros(self.seq_len - len(X), X.shape[-1])], dim=0
+                )
+            if len(y) < self.seq_len:
+                y = torch.cat(
+                    [y, torch.zeros(self.seq_len - len(y), y.shape[-1])], dim=0
+                )
+            if len(step) < self.seq_len:
+                step = np.concatenate(
+                    [step, np.zeros(self.seq_len - len(step), dtype=int)], axis=0
+                )
+            # sidはtrainのときは使わないので今はとりあえず考えない
+            return X, y, sid, step
+
+        # Normal random sequence sampling
         start = np.random.randint(low=0, high=max(1, len(X) - self.seq_len))
         end = min(start + self.seq_len, len(X))
         X = X[start:end]
@@ -794,6 +842,12 @@ class DataloaderConfigV3(Protocol):
 
     train_seq_len: int
     # infer_seq_len: int
+
+    random_sequence_mixing: bool
+    """ランダムに２つシーケンスを選んで、seq_lenの半分づつくっつける. 正則化を期待"""
+
+    sample_per_epoch: int
+    """trainのときにepochあたり何サンプル使うか"""
 
 
 def build_dataloader_v3(
@@ -914,6 +968,8 @@ def build_dataloader_v3(
             downsample_factor=config.downsample_factor,
             w_sigma=config.w_sigma,
             seq_len=config.train_seq_len,
+            random_sequence_mixing=config.random_sequence_mixing,
+            sample_per_epoch=config.sample_per_epoch,
         )
         dl_train = DataLoader(
             ds_train,
@@ -1221,6 +1277,11 @@ def test_build_dl_v3():
         sigma: int = 720
         downsample_factor: int = 12
         w_sigma: float = 0.15
+
+        train_seq_len: int = 24 * 60 * 5
+
+        random_sequence_mixing: bool = True
+        sample_per_epoch: int = 20000
 
     dl = build_dataloader_v3(Config, 0, "train", debug=True)
 

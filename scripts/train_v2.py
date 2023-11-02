@@ -109,7 +109,7 @@ def valid_one_epoch_v3(
         enumerate(dl_valid), total=len(dl_valid), dynamic_ncols=True, leave=True
     )
     for _, batch in pbar:
-        with torch.inference_mode():
+        with torch.no_grad():
             # (BS, seq_len, n_features)
             X = batch[0].to(device, non_blocking=True)
             # (BS, seq_len, 2)

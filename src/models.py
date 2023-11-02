@@ -193,6 +193,87 @@ class MultiResidualBiGRUMultiKSConv1D(nn.Module):
         return x, new_h  # log probabilities + hidden states
 
 
+class TransformerEncoderLayer(nn.Module):
+    """
+
+    Attributes:
+        mha: MultiheadAttention
+        ln1: LayerNorm
+        ln2: LayerNorm
+        seq: nn.Sequential
+
+    Refs:
+    [1]
+    https://www.kaggle.com/code/baurzhanurazalinov/parkinson-s-freezing-tdcsfog-training-code
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 128,
+        num_heads: int = 8,
+        seq_model_dim: int = 320,
+        encoder_dropout: float = 0.2,
+    ) -> None:
+        super().__init__()
+        self.mha = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+        self.ln1 = nn.LayerNorm(embed_dim)
+        self.ln2 = nn.LayerNorm(embed_dim)
+
+        self.seq = nn.Sequential(
+            nn.Linear(seq_model_dim, seq_model_dim),
+            nn.ReLU(),
+            nn.Dropout(encoder_dropout),
+            nn.Linear(seq_model_dim, seq_model_dim),
+            nn.Dropout(encoder_dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        attn_out, attn_weights = self.mha(x, x, x)
+        x = self.ln1(x + attn_out)
+        x = x + self.seq(x)
+        x = self.ln2(x)
+        return x
+
+
+class SleepTransformerEncoder(nn.Module):
+    """
+
+    Refs:
+    [1]
+    https://www.kaggle.com/code/baurzhanurazalinov/parkinson-s-freezing-tdcsfog-training-code
+    """
+
+    def __init__(
+        self,
+        model_dim: int = 320,
+        dropout_rate: float = 0.2,
+        num_encoder_layers: int = 3,
+        num_lstm_layers: int = 3,
+        embed_dim: int = 128,
+        num_heads: int = 8,
+        seq_model_dim: int = 320,
+        seq_len: int = 3000,
+    ):
+        super().__init__()
+        self.first_linear = nn.Linear(model_dim, model_dim)
+        self.first_dropout = nn.Dropout(dropout_rate)
+        self.encoder_layers = [
+            TransformerEncoderLayer(
+                embed_dim=embed_dim,
+                num_heads=num_heads,
+                seq_model_dim=seq_model_dim,
+                encoder_dropout=dropout_rate,
+            )
+            for _ in range(num_encoder_layers)
+        ]
+        self.lstm_layers = [
+            nn.LSTM(model_dim, model_dim, bidirectional=True, batch_first=True)
+            for _ in range(num_lstm_layers)
+        ]
+        self.seq_len = seq_len
+        self.pos_encoding = nn.Parameter()
+
+
 class SleepRNNMocel(nn.Module):
     """
 

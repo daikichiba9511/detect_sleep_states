@@ -1,7 +1,7 @@
 import time
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Callable, Literal, Protocol, Sequence
+from typing import Any, Callable, Literal, Protocol, Sequence, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -354,13 +354,13 @@ def train_one_fold(
     train_one_epoch: Callable = train_one_epoch,
     valid_one_epoch: Callable = valid_one_epoch,
     log_interval: int = 1,
-    model_compile: bool = True,
+    model_compile: bool = False,
 ) -> None:
     logger.info(f"Start training fold{fold}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(config).to(device)
     if model_compile:
-        model = torch.compile(model, mode="default")
+        model = cast(nn.Module, torch.compile(model, mode="default"))
 
     model_params = list(model.named_parameters())
     no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
@@ -445,7 +445,9 @@ def train_one_fold(
         early_stopping.check(score, model, config.model_save_path)
         if early_stopping.is_early_stop:
             logger.info(
-                f"Early Stopping at epoch {epoch}. best score is {early_stopping.best_score}"
+                "Early Stopping at epoch {epoch}. best score is {early_stopping.best_score}".format(
+                    epoch=epoch, early_stopping=early_stopping
+                )
             )
             break
 
@@ -470,5 +472,10 @@ def train_one_fold(
 
     elapsed_time = time.time() - start_time
     logger.info(
-        f"Training fold{fold} is done. elapsed time: {elapsed_time:.2f}[sec]/{elapsed_time / 60:.2f}[min]/{elapsed_time / 3660:.2f}[hour]"
+        "Training fold{fold} is done. elapsed time: {elapsed_time:.2f}[sec]/{elapsed_time_min:.2f}[min]/{elapsed_time_hour:.2f}[hour]".format(
+            fold=fold,
+            elapsed_time=elapsed_time,
+            elapsed_time_min=elapsed_time / 60,
+            elapsed_time_hour=elapsed_time / 60 / 60,
+        )
     )

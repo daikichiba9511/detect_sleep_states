@@ -3,9 +3,9 @@ from typing import Any
 
 
 class Config:
-    name: str = "exp013"
+    name: str = "exp015"
     desc: str = """
-    exp012 + MultiResidualBiGRUMultiKSConv1D
+    exp014 + sample_per_epoch=10000
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -73,5 +73,5 @@ class Config:
     w_sigma: float = 0.15
     downsample_factor: int = 12
 
-    random_sequence_mixing: bool = False
-    sample_per_epoch: int = 20000
+    random_sequence_mixing: bool = True
+    sample_per_epoch: int = 10000
