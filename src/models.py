@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Protocol, Any
 
 import torch
 import torch.nn as nn
@@ -217,11 +217,16 @@ class TransformerEncoderLayer(nn.Module):
         num_heads: int = 8,
         seq_model_dim: int = 320,
         encoder_dropout: float = 0.2,
+        device: torch.device = torch.device("cuda"),
     ) -> None:
         super().__init__()
-        self.mha = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
-        self.ln1 = nn.LayerNorm(embed_dim)
-        self.ln2 = nn.LayerNorm(embed_dim)
+        self.mha = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=encoder_dropout,
+            device=device,
+        )
+        self.ln = nn.LayerNorm(embed_dim, device=device)
 
         self.seq = nn.Sequential(
             nn.Linear(seq_model_dim, seq_model_dim),
@@ -229,16 +234,16 @@ class TransformerEncoderLayer(nn.Module):
             nn.Dropout(encoder_dropout),
             nn.Linear(seq_model_dim, seq_model_dim),
             nn.Dropout(encoder_dropout),
-        )
+        ).to(device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # print("Enc 1: x.shape", x.shape)
-        attn_out, attn_weights = self.mha(x, x, x)
-        x = self.ln1(x + attn_out)
+        attn_out, _ = self.mha(query=x, value=x, key=x)
+        x = self.ln(x + attn_out)
         # print("Enc 2: x.shape", x.shape)
         x = x + self.seq(x)
         # print("Enc 3: x.shape", x.shape)
-        x = self.ln2(x)
+        x = self.ln(x)
         # print("Enc 4: x.shape", x.shape)
         return x
 
@@ -261,9 +266,10 @@ class SleepTransformerEncoder(nn.Module):
         num_heads: int = 8,
         seq_model_dim: int = 320,
         seq_len: int = 3000,
+        device: torch.device = torch.device("cuda"),
     ):
         super().__init__()
-        self.first_linear = nn.Linear(model_dim, model_dim)
+        self.first_linear = nn.Linear(model_dim, embed_dim)
         self.first_dropout = nn.Dropout(dropout_rate)
         self.encoder_layers = [
             TransformerEncoderLayer(
@@ -271,16 +277,20 @@ class SleepTransformerEncoder(nn.Module):
                 num_heads=num_heads,
                 seq_model_dim=seq_model_dim,
                 encoder_dropout=dropout_rate,
+                device=device,
             )
             for _ in range(num_encoder_layers)
         ]
         self.lstm_layers = [
-            nn.LSTM(model_dim, model_dim // 2, bidirectional=True, batch_first=True)
+            nn.LSTM(embed_dim, embed_dim // 2, bidirectional=True, batch_first=True).to(
+                device
+            )
             for _ in range(num_lstm_layers)
         ]
         self.seq_len = seq_len
+        data = torch.normal(mean=0, std=0.02, size=(1, self.seq_len, embed_dim))
         self.pos_encoding = nn.Parameter(
-            torch.normal(mean=0, std=0.02, size=(1, self.seq_len, model_dim)),
+            data.to(device),
             requires_grad=True,
         )
 
@@ -301,6 +311,7 @@ class SleepTransformerEncoder(nn.Module):
                 map(int, torch.randint(low=-self.seq_len, high=0, size=(bs,)))
             )
             random_pos_encoding = torch.roll(tile, shifts=shifts, dims=[1] * bs)
+            # print(f"{x.shape=}, {random_pos_encoding.shape=}")
             x = x + random_pos_encoding
         else:
             tile = torch.tile(self.pos_encoding, (bs, 1, 1))
@@ -309,8 +320,13 @@ class SleepTransformerEncoder(nn.Module):
         x = self.first_dropout(x)
 
         # print(f"{x.shape =}")
+        # Ref:
+        # [1]
+        # https://www.kaggle.com/code/cdeotte/tensorflow-transformer-0-112/notebook#Build-Model
         for i in range(len(self.encoder_layers)):
+            x_old = x
             x = self.encoder_layers[i](x)
+            x = 0.7 * x + 0.3 * x_old  # skip connrection
             # print(f"{i}: {x.shape =}")
 
         for i in range(1, len(self.lstm_layers)):
@@ -333,6 +349,7 @@ class SleepTransformer(nn.Module):
         seq_model_dim: int = 320,
         seq_len: int = 3000,
         out_dim: int = 2,
+        device: torch.device = torch.device("cuda"),
     ):
         super().__init__()
         self.encoder = SleepTransformerEncoder(
@@ -344,8 +361,14 @@ class SleepTransformer(nn.Module):
             num_heads=num_heads,
             seq_len=seq_len,
             seq_model_dim=seq_model_dim,
+            device=device,
         )
-        self.fc = nn.Linear(model_dim, out_dim)
+        self.fc = nn.Sequential(
+            nn.Linear(embed_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(128, out_dim),
+        )
 
     def forward(self, x: torch.Tensor, training: bool = False) -> torch.Tensor:
         x = self.encoder(x, training=training)
@@ -437,6 +460,7 @@ class ModelConfig(Protocol):
     seq_len: int
 
     train_seq_len: int
+    transformer_params: dict[str, Any]
 
 
 def build_model(config: ModelConfig) -> torch.nn.Module:
@@ -469,14 +493,14 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
         return model
     elif config.model_type == "SleepTransformer":
         model = SleepTransformer(
-            model_dim=config.model_size,
-            dropout_rate=0.2,
-            num_encoder_layers=config.n_layers,
-            num_lstm_layers=config.n_layers,
-            embed_dim=config.model_size,
-            num_heads=2,
-            seq_model_dim=config.model_size,
-            seq_len=config.train_seq_len,
+            model_dim=config.transformer_params["model_dim"],
+            dropout_rate=config.transformer_params["dropout"],
+            num_encoder_layers=config.transformer_params["num_encoder_layers"],
+            num_lstm_layers=config.transformer_params["num_lstm_layers"],
+            embed_dim=config.transformer_params["embed_dim"],
+            num_heads=config.transformer_params["num_heads"],
+            seq_model_dim=config.transformer_params["seq_model_dim"],
+            seq_len=config.transformer_params["seq_len"],
             out_dim=config.out_size,
         )
         return model
@@ -573,15 +597,16 @@ def _test_run_model4():
         num_heads=2,
         seq_model_dim=10,
         seq_len=3000,
+        device=torch.device("cuda"),
     )
-    model = model.train()
+    model = model.to(torch.device("cuda")).train()
 
     max_chunk_size = 10
     seq_len = 3000
     bs = 8 * 2
-    x = torch.randn(bs, seq_len, max_chunk_size)
+    x = torch.randn(bs, seq_len, max_chunk_size).to(torch.device("cuda"))
     print(x.shape)
-    p = model(x, True)
+    p = model(x, training=True)
     print("pred: ", p.shape)
 
 

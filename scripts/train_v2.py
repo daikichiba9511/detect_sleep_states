@@ -37,6 +37,7 @@ def train_one_epoch_v3(
     device: torch.device,
     seed: int = 42,
     use_amp: bool = False,
+    num_grad_accum: int = 1,
     # -- additional params
     chunk_size: int = 100,
 ) -> dict[str, float | int]:
@@ -49,7 +50,7 @@ def train_one_epoch_v3(
     pbar = tqdm(
         enumerate(dl_train), total=len(dl_train), dynamic_ncols=True, leave=True
     )
-    for _, batch in pbar:
+    for batch_idx, batch in pbar:
         with autocast(enabled=use_amp, dtype=torch.bfloat16):
             X = batch[0].to(device, non_blocking=True)
             y = batch[1].to(device, non_blocking=True)
@@ -62,7 +63,7 @@ def train_one_epoch_v3(
                 y_mix, lam = None, None
 
             # pred, _ = model(X, None)  # MultiResidualBiGRU exp007
-            pred = model(X, True)  # SleepTransformer
+            pred = model(X, training=True)  # SleepTransformer
             normalized_pred = mean_std_normalize_label(pred)
 
             loss = criterion(normalized_pred, y)
@@ -72,11 +73,13 @@ def train_one_epoch_v3(
                 loss += loss_mixed * (1 - lam)
 
             scaler.scale(loss).backward()  # type: ignore
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
-            losses.update(loss.item())
-            pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
+
+            if (batch_idx + 1) % num_grad_accum == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                losses.update(loss.item())
+                pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
     result = {
         "epoch": epoch,
@@ -98,13 +101,40 @@ def valid_one_epoch_v3(
     chunk_size: int = 100,
 ) -> dict[str, float | int]:
     seed_everything(seed)
-    model.eval()
+    model = model.to(device).eval()
     losses = AverageMeter("loss")
     onset_losses = AverageMeter("onset_loss")
     wakeup_losses = AverageMeter("wakeup_loss")
     onset_pos_only_losses = AverageMeter("onset_pos_only_loss")
     wakeup_pos_only_losses = AverageMeter("wakeup_pos_only_loss")
     start_time = time.time()
+
+    def _infer_for_transformer(model: nn.Module, X: torch.Tensor) -> torch.Tensor:
+        chunk_size = 7200
+        # (BS, seq_len, n_features)
+        X = X.to(device, non_blocking=True)
+        _, seq_len, n_features = X.shape
+        X = X.squeeze(0)
+
+        # print(f"1 {X.shape=}")
+        if X.shape[0] % chunk_size != 0:
+            X = torch.concat(
+                [
+                    X,
+                    torch.zeros(
+                        (chunk_size - len(X) % chunk_size, n_features),
+                        device=X.device,
+                    ),
+                ],
+            )
+
+        # print(f"2 {X.shape=}")
+        X_chunk = X.view(X.shape[0] // chunk_size, chunk_size, n_features)
+        # print(f"3 {X.shape=}")
+        # (BS, seq_len, 2)
+        pred = model(X_chunk, training=False)
+        pred = pred.reshape(-1, 2)[:seq_len].unsqueeze(0)
+        return pred
 
     pbar = tqdm(
         enumerate(dl_valid), total=len(dl_valid), dynamic_ncols=True, leave=True
@@ -116,7 +146,8 @@ def valid_one_epoch_v3(
             # (BS, seq_len, 2)
             y = batch[1].to(device, non_blocking=True)
             # pred, _ = model(X, None)  # MultiResidualBiGRU exp007
-            pred = model(X, False)  # SleepTransformer
+            # pred = model(X, training=False)  # SleepTransformer
+            pred = _infer_for_transformer(model, X)
             # logits, h = model(x_chunk, h)  # MultiResidualBiGRU
             normalized_pred = mean_std_normalize_label(pred)
             loss = criterion(normalized_pred, y)
@@ -158,7 +189,11 @@ def main(config: str, fold: int, debug: bool) -> None:
         cfg,
         fold,
         debug,
-        partial(train_one_epoch_v3, chunk_size=cfg.train_chunk_size),
+        partial(
+            train_one_epoch_v3,
+            chunk_size=cfg.train_chunk_size,
+            num_grad_accum=cfg.num_grad_accum,
+        ),
         partial(valid_one_epoch_v3, chunk_size=cfg.infer_chunk_size),
     )
     LOGGER.info(f"Fold {fold} training has finished.")

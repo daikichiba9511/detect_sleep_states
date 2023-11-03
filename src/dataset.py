@@ -571,6 +571,13 @@ def mean_std_normalize_label(y: torch.Tensor, eps: float = 1e-4) -> torch.Tensor
     return y
 
 
+def normalize(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
+    mean = x.mean()
+    std = x.std()
+    x = (x - mean) / (std + eps)
+    return x
+
+
 class SleepDatasetV3(Dataset):
     def __init__(
         self,
@@ -612,6 +619,7 @@ class SleepDatasetV3(Dataset):
         return self.sample_per_epoch if self.phase == "train" else len(self.data)
 
     def downsample_and_create_feats(self, feat: np.ndarray, downsample_factor: int):
+        feat = normalize(feat)
         # downsample
         # 0-padding
         if len(feat) % downsample_factor != 0:
