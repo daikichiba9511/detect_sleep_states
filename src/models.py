@@ -225,6 +225,7 @@ class TransformerEncoderLayer(nn.Module):
             num_heads=num_heads,
             dropout=encoder_dropout,
             device=device,
+            batch_first=True,
         )
         self.ln = nn.LayerNorm(embed_dim, device=device)
 
@@ -588,6 +589,8 @@ def _test_run_model3():
 
 def _test_run_model4():
     print("Test3")
+    # device = torch.device("cuda")
+    device = torch.device("cpu")
     model = SleepTransformer(
         model_dim=10,
         dropout_rate=0.2,
@@ -597,14 +600,14 @@ def _test_run_model4():
         num_heads=2,
         seq_model_dim=10,
         seq_len=3000,
-        device=torch.device("cuda"),
+        device=device,
     )
-    model = model.to(torch.device("cuda")).train()
+    model = model.to(device).train()
 
     max_chunk_size = 10
     seq_len = 3000
     bs = 8 * 2
-    x = torch.randn(bs, seq_len, max_chunk_size).to(torch.device("cuda"))
+    x = torch.randn(bs, seq_len, max_chunk_size).to(device)
     print(x.shape)
     p = model(x, training=True)
     print("pred: ", p.shape)

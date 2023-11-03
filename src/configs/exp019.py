@@ -67,7 +67,7 @@ class Config:
         embed_dim=320,
         num_encoder_layers=5,
         num_lstm_layers=2,
-        num_heads=5,
+        num_heads=32,
         dropout=0.0,
         seq_model_dim=320,
         seq_len=24 * 60 * 5,
