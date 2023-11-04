@@ -13,10 +13,42 @@ from tqdm.auto import tqdm
 from src.tools import AverageMeter
 from src.dataset import build_dataloader_v3, mean_std_normalize_label
 from src.losses import build_criterion
-from src.models import build_model
+from src.models import build_model, SleepTransformer
 from src import utils as my_utils
 
 logger = getLogger(__name__)
+
+
+def _infer_for_transformer(
+    model: nn.Module, X: torch.Tensor, device: torch.device
+) -> torch.Tensor:
+    chunk_size = 7200
+    # (BS, seq_len, n_features)
+    X = X.to(device, non_blocking=True)
+    bs, seq_len, n_features = X.shape
+    if bs != 1:
+        raise ValueError(f"batch size must be 1, but {bs=}")
+    X = X.squeeze(0)
+
+    # print(f"1 {X.shape=}")
+    if X.shape[0] % chunk_size != 0:
+        X = torch.concat(
+            [
+                X,
+                torch.zeros(
+                    (chunk_size - len(X) % chunk_size, n_features),
+                    device=X.device,
+                ),
+            ],
+        )
+
+    # print(f"2 {X.shape=}")
+    X_chunk = X.view(X.shape[0] // chunk_size, chunk_size, n_features)
+    # print(f"3 {X.shape=}")
+    # (BS, seq_len, 2)
+    pred = model(X_chunk, training=False)
+    pred = pred.reshape(-1, 2)[:seq_len].unsqueeze(0)
+    return pred
 
 
 class Runner:
@@ -246,7 +278,10 @@ class Runner:
                 sid = batch[2]
                 pred = []
                 for i, model in enumerate(models):
-                    pred_ = self._make_pred_v3(model, batch, chunk_size)
+                    if isinstance(model, SleepTransformer):
+                        pred_ = _infer_for_transformer(model, batch[0], self.device)
+                    else:
+                        pred_ = self._make_pred_v3(model, batch, chunk_size)
                     pred.append(pred_.detach().cpu().float())
 
                 pred = torch.concat(pred)

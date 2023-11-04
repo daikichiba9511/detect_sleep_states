@@ -39,7 +39,6 @@ def train_one_epoch_v3(
     use_amp: bool = False,
     num_grad_accum: int = 1,
     # -- additional params
-    chunk_size: int = 100,
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).train()
@@ -98,7 +97,6 @@ def valid_one_epoch_v3(
     criterion: LossFunc,
     seed: int = 42,
     # -- additional params
-    chunk_size: int = 100,
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).eval()
@@ -191,10 +189,9 @@ def main(config: str, fold: int, debug: bool) -> None:
         debug,
         partial(
             train_one_epoch_v3,
-            chunk_size=cfg.train_chunk_size,
             num_grad_accum=cfg.num_grad_accum,
         ),
-        partial(valid_one_epoch_v3, chunk_size=cfg.infer_chunk_size),
+        partial(valid_one_epoch_v3),
     )
     LOGGER.info(f"Fold {fold} training has finished.")
 

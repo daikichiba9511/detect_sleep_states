@@ -23,7 +23,7 @@ class Config:
 
     # Train
     use_amp: bool = True
-    num_epochs: int = 10 * 3
+    num_epochs: int = 10 * 5
     batch_size: int = 8 * 3
     num_workers: int = 8 * 2
 
@@ -60,18 +60,7 @@ class Config:
     out_size: int = 2
     n_layers: int = 5
 
-    num_grad_accum: int = 1
-
-    transformer_params: dict[str, Any] = dict(
-        model_dim=10,
-        embed_dim=320,
-        num_encoder_layers=5,
-        num_lstm_layers=2,
-        num_heads=32,
-        dropout=0.0,
-        seq_model_dim=320,
-        seq_len=24 * 60 * 5,
-    )
+    num_grad_accum: int = 8
 
     bidir: bool = True
 
@@ -79,7 +68,7 @@ class Config:
     train_chunk_size: int = 24 * 60  # 1hour
     infer_chunk_size: int = 24 * 60 * 100  # 100hour
     """推論時のchunk_size"""
-    train_seq_len: int = 24 * 60 * 5  # 24 * 60 = 1hour => 1440
+    train_seq_len: int = 24 * 60 * 5  # 24 * 60 = 1440 min / day
     """train時にdatasetで、どの長さのseriesを切り出すか"""
     # infer_seq_len: int = 24 * 60 * 6  # 6hour
     series_save_dir: Path = root_dir / "output" / "series"
@@ -93,3 +82,15 @@ class Config:
     random_sequence_mixing: bool = True
     sample_per_epoch: int = 5000
     # sample_per_epoch: int = 25
+
+    transformer_params: dict[str, Any] = dict(
+        model_dim=10,
+        embed_dim=320,
+        seq_model_dim=320,
+        num_heads=8,
+        num_encoder_layers=5,
+        num_lstm_layers=2,
+        dropout=0.0,
+        seq_len=train_seq_len,
+        fc_hidden_dim=64 * 2,
+    )

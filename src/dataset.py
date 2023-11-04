@@ -7,7 +7,6 @@ import polars as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
-import json
 
 import joblib
 from src.fe import make_sequence_chunks
@@ -606,7 +605,19 @@ class SleepDatasetV3(Dataset):
 
         self.phase = phase
         self.targets = targets
-        self.data = data
+
+        self.data = []
+        # Normalize
+        normalize_fn = normalize
+        for df in tqdm(data, desc="Preprocessing data"):
+            for col in ["anglez", "enmo"]:
+                df.with_columns(
+                    pl.col(col)
+                    .map_batches(lambda x: pl.Series(normalize_fn(x.to_numpy())))
+                    .alias(col)
+                )
+            self.data.append(df.to_pandas(use_pyarrow_extension_array=True))
+
         self.ids = ids
         self.sigma = sigma
         self.downsample_factor = downsample_factor
@@ -619,7 +630,6 @@ class SleepDatasetV3(Dataset):
         return self.sample_per_epoch if self.phase == "train" else len(self.data)
 
     def downsample_and_create_feats(self, feat: np.ndarray, downsample_factor: int):
-        feat = normalize(feat)
         # downsample
         # 0-padding
         if len(feat) % downsample_factor != 0:
@@ -634,10 +644,10 @@ class SleepDatasetV3(Dataset):
         feat_median = np.median(feat, 1)
         feat_max = np.max(feat, 1)
         feat_min = np.min(feat, 1)
-        shift_feat_mean = np.roll(feat_mean, 1)
-        shift2_feat_mean = np.roll(feat_mean, 2)
-        diff_featmean_featmean_mean = feat_mean - np.mean(feat_mean)
-        diff_featmean_featmean_median = feat_mean - np.median(feat_mean)
+        # shift_feat_mean = np.roll(feat_mean, 1)
+        # shift2_feat_mean = np.roll(feat_mean, 2)
+        # diff_featmean_featmean_mean = feat_mean - np.mean(feat_mean)
+        # diff_featmean_featmean_median = feat_mean - np.median(feat_mean)
         feat = np.dstack(
             [
                 feat_mean,
@@ -909,15 +919,13 @@ def build_dataloader_v3(
 
         targets, data_valid_series, ids = joblib.load(config.target_series_uni_ids_path)
 
-        valid_targets = []
-        valid_data = []
-        valid_ids = []
+        valid_targets: list[list[tuple[int, int]]] = []
+        valid_data: list[pl.DataFrame] = []
+        valid_ids: list[str] = []
         for i, sid in enumerate(ids):
             if sid in valid_series_ids:
                 valid_targets.append(targets[i])
-                valid_data.append(
-                    data_valid_series[i].to_pandas(use_pyarrow_extension_array=True)
-                )
+                valid_data.append(data_valid_series[i])
                 valid_ids.append(sid)
             if debug and i > 50:
                 break
@@ -952,15 +960,13 @@ def build_dataloader_v3(
 
         targets, data_train_series, ids = joblib.load(config.target_series_uni_ids_path)
 
-        train_targets = []
-        train_data = []
-        train_ids = []
+        train_targets: list[list[tuple[int, int]]] = []
+        train_data: list[pl.DataFrame] = []
+        train_ids: list[str] = []
         for i, sid in enumerate(ids):
             if sid in train_series_ids:
                 train_targets.append(targets[i])
-                train_data.append(
-                    data_train_series[i].to_pandas(use_pyarrow_extension_array=True)
-                )
+                train_data.append(data_train_series[i])
                 train_ids.append(sid)
             if debug and i > 50:
                 break

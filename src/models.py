@@ -2,7 +2,6 @@ from typing import Protocol, Any
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ResidualBiGRU(nn.Module):
@@ -228,7 +227,6 @@ class TransformerEncoderLayer(nn.Module):
             batch_first=True,
         )
         self.ln = nn.LayerNorm(embed_dim, device=device)
-
         self.seq = nn.Sequential(
             nn.Linear(seq_model_dim, seq_model_dim),
             nn.ReLU(),
@@ -239,7 +237,7 @@ class TransformerEncoderLayer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # print("Enc 1: x.shape", x.shape)
-        attn_out, _ = self.mha(query=x, value=x, key=x)
+        attn_out, _ = self.mha(query=x, value=x, key=x, need_weights=False)
         x = self.ln(x + attn_out)
         # print("Enc 2: x.shape", x.shape)
         x = x + self.seq(x)
@@ -282,10 +280,13 @@ class SleepTransformerEncoder(nn.Module):
             )
             for _ in range(num_encoder_layers)
         ]
-        self.lstm_layers = [
+        self.rnn_layers = [
             nn.LSTM(embed_dim, embed_dim // 2, bidirectional=True, batch_first=True).to(
                 device
             )
+            # nn.GRU(embed_dim, embed_dim // 2, bidirectional=True, batch_first=True).to(
+            #     device
+            # )
             for _ in range(num_lstm_layers)
         ]
         self.seq_len = seq_len
@@ -330,9 +331,9 @@ class SleepTransformerEncoder(nn.Module):
             x = 0.7 * x + 0.3 * x_old  # skip connrection
             # print(f"{i}: {x.shape =}")
 
-        for i in range(1, len(self.lstm_layers)):
+        for i in range(len(self.rnn_layers)):
             # print(f"Lstm: 1 {i}: {x.shape =}")
-            x, _ = self.lstm_layers[i](x)
+            x, _ = self.rnn_layers[i](x)
             # print(f"Lstm: 2 {i}: {x.shape =}")
 
         return x
@@ -351,6 +352,7 @@ class SleepTransformer(nn.Module):
         seq_len: int = 3000,
         out_dim: int = 2,
         device: torch.device = torch.device("cuda"),
+        fc_hidden_size: int = 128,
     ):
         super().__init__()
         self.encoder = SleepTransformerEncoder(
@@ -365,10 +367,10 @@ class SleepTransformer(nn.Module):
             device=device,
         )
         self.fc = nn.Sequential(
-            nn.Linear(embed_dim, 128),
+            nn.Linear(embed_dim, fc_hidden_size),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(128, out_dim),
+            nn.Linear(fc_hidden_size, out_dim),
         )
 
     def forward(self, x: torch.Tensor, training: bool = False) -> torch.Tensor:
@@ -461,7 +463,7 @@ class ModelConfig(Protocol):
     seq_len: int
 
     train_seq_len: int
-    transformer_params: dict[str, Any]
+    transformer_params: dict[str, Any] | None
 
 
 def build_model(config: ModelConfig) -> torch.nn.Module:
@@ -493,6 +495,9 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
         )
         return model
     elif config.model_type == "SleepTransformer":
+        if config.transformer_params is None:
+            raise ValueError("config.transformer_params is None")
+
         model = SleepTransformer(
             model_dim=config.transformer_params["model_dim"],
             dropout_rate=config.transformer_params["dropout"],
@@ -503,6 +508,7 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             seq_model_dim=config.transformer_params["seq_model_dim"],
             seq_len=config.transformer_params["seq_len"],
             out_dim=config.out_size,
+            fc_hidden_size=config.transformer_params["fc_hidden_dim"],
         )
         return model
 

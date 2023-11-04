@@ -346,6 +346,11 @@ class TrainConfig(Protocol):
     target_series_uni_ids_path: Path
     train_seq_len: int
 
+    transformer_params: dict[str, Any] | None
+
+    random_sequence_mixing: bool
+    sample_per_epoch: int
+
 
 def train_one_fold(
     config: TrainConfig,
