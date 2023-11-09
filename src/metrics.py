@@ -5,7 +5,8 @@ video.
 
 """
 
-from typing import Dict, List, Tuple
+import bisect
+from typing import Dict, List, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -29,11 +30,11 @@ class ParticipantVisibleError(Exception):
 
 
 # Set some placeholders for global parameters
-series_id_column_name = None
-time_column_name = None
-event_column_name = None
-score_column_name = None
-use_scoring_intervals = None
+series_id_column_name = "series_id"
+time_column_name = "step"
+event_column_name = "event"
+score_column_name = "score"
+use_scoring_intervals = False
 
 
 def score(
@@ -248,9 +249,7 @@ def score(
         score_column_name,
     ]:
         if column_name not in submission.columns:
-            raise ParticipantVisibleError(
-                f"Submission must have column '{target_name}'."
-            )
+            raise ParticipantVisibleError("Submission must have column")
 
     if not pd.api.types.is_numeric_dtype(submission[time_column_name]):
         raise ParticipantVisibleError(
@@ -276,13 +275,90 @@ def filter_detections(
 ) -> pd.DataFrame:
     """Drop detections not inside a scoring interval."""
     detection_time = detections.loc[:, time_column_name].sort_values().to_numpy()
-    intervals = intervals.to_numpy()
+    intervals = cast(np.ndarray, intervals.to_numpy())
     is_scored = np.full_like(detection_time, False, dtype=bool)
 
     i, j = 0, 0
     while i < len(detection_time) and j < len(intervals):
         time = detection_time[i]
         int_ = intervals[j]
+
+        # If the detection is prior in time to the interval, go to the next detection.
+        if time < int_.left:
+            i += 1
+        # If the detection is inside the interval, keep it and go to the next detection.
+        elif time in int_:
+            is_scored[i] = True
+            i += 1
+        # If the detection is later in time, go to the next interval.
+        else:
+            j += 1
+
+    return detections.loc[is_scored].reset_index(drop=True)
+
+
+def find_nearest_time_idx(
+    times, target_times, excluded_indices, tolerance
+) -> tuple[int | None, float]:
+    """Find the index of the nearest time to the target that is not in excluded_indices."""
+    idx = bisect.bisect_left(times, target_times)
+
+    best_idx = None
+    best_error = float("inf")
+
+    offset_range = min(len(times), tolerance)
+    for offset in range(-offset_range, offset_range):
+        check_idx = idx + offset
+        if 0 <= check_idx < len(times) and check_idx not in excluded_indices:
+            error = abs(times[check_idx] - target_times)
+            if error < best_error:
+                best_error = error
+                best_idx = check_idx
+
+    return best_idx, best_error
+
+
+def faster_match_detections(
+    tolerance: float, ground_truths: pd.DataFrame, detections: pd.DataFrame
+) -> pd.DataFrame:
+    """Match detections to ground truth events. Arguments are taken from a common event x tolerance x series_id evaluation group."""
+    detections_sorted = detections.sort_values(
+        score_column_name, ascending=False
+    ).dropna()
+    is_matched = np.full_like(detections_sorted[event_column_name], False, dtype=bool)
+    gts_matched = set()
+    ground_truths_times = ground_truths.sort_values(time_column_name)
+    ground_truths_times = ground_truths_times[time_column_name].tolist()
+    matched_gt_indices: set[int] = set()
+
+    for i, det in enumerate(detections_sorted.itertuples(index=False)):
+        det_time = getattr(det, time_column_name)
+
+        best_idx, best_error = find_nearest_time_idx(
+            ground_truths_times, det_time, matched_gt_indices, tolerance
+        )
+
+        if best_idx is not None and best_error < tolerance:
+            is_matched[i] = True
+            gts_matched.add(best_idx)
+
+    detections_sorted["matched"] = is_matched
+
+    return detections_sorted
+
+
+def filter_detections(
+    detections: pd.DataFrame, intervals: pd.DataFrame
+) -> pd.DataFrame:
+    """Drop detections not inside a scoring interval."""
+    detection_time = detections.loc[:, time_column_name].sort_values().to_numpy()
+    intervals_ = intervals.to_numpy()
+    is_scored = np.full_like(detection_time, False, dtype=bool)
+
+    i, j = 0, 0
+    while i < len(detection_time) and j < len(intervals_):
+        time = detection_time[i]
+        int_ = intervals_[j]
 
         # If the detection is prior in time to the interval, go to the next detection.
         if time < int_.left:
@@ -330,7 +406,7 @@ def precision_recall_curve(
     matches: np.ndarray, scores: np.ndarray, p: int
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     if len(matches) == 0:
-        return [1], [0], []
+        return [1], [0], []  # type: ignore
 
     # Sort matches by decreasing confidence
     idxs = np.argsort(scores, kind="stable")[::-1]
@@ -362,13 +438,13 @@ def precision_recall_curve(
 def average_precision_score(matches: np.ndarray, scores: np.ndarray, p: int) -> float:
     precision, recall, _ = precision_recall_curve(matches, scores, p)
     # Compute step integral
-    return -np.sum(np.diff(recall) * np.array(precision)[:-1])
+    return -np.sum(np.diff(recall) * np.array(precision)[:-1])  # type: ignore
 
 
 def event_detection_ap(
     solution: pd.DataFrame,
     submission: pd.DataFrame,
-    tolerances: Dict[str, List[float]],
+    tolerances: Dict[str, List[float]] = tolerances,  # type: ignore
 ) -> float:
     # Ensure solution and submission are sorted properly
     solution = solution.sort_values([series_id_column_name, time_column_name])
@@ -376,24 +452,25 @@ def event_detection_ap(
 
     # Extract scoring intervals.
     if use_scoring_intervals:
-        intervals = (
-            solution.query("event in ['start', 'end']")
-            .assign(
-                interval=lambda x: x.groupby(
-                    [series_id_column_name, event_column_name]
-                ).cumcount()
-            )
-            .pivot(
-                index="interval",
-                columns=[series_id_column_name, event_column_name],
-                values=time_column_name,
-            )
-            .stack(series_id_column_name)
-            .swaplevel()
-            .sort_index()
-            .loc[:, ["start", "end"]]
-            .apply(lambda x: pd.Interval(*x, closed="both"), axis=1)
-        )
+        # intervals = (
+        #     solution.query("event in ['start', 'end']")
+        #     .assign(
+        #         interval=lambda x: x.groupby(
+        #             [series_id_column_name, event_column_name]
+        #         ).cumcount()
+        #     )
+        #     .pivot(
+        #         index="interval",
+        #         columns=[series_id_column_name, event_column_name],
+        #         values=time_column_name,
+        #     )
+        #     .stack(series_id_column_name)
+        #     .swaplevel()
+        #     .sort_index()
+        #     .loc[:, ["start", "end"]]
+        #     .apply(lambda x: pd.Interval(*x, closed="both"), axis=1)
+        # )
+        pass
 
     # Extract ground-truth events.
     ground_truths = solution.query("event not in ['start', 'end']").reset_index(
@@ -408,16 +485,17 @@ def event_detection_ap(
 
     # Remove detections outside of scoring intervals
     if use_scoring_intervals:
-        detections_filtered = []
-        for (det_group, dets), (int_group, ints) in zip(
-            detections.groupby(series_id_column_name),
-            intervals.groupby(series_id_column_name),
-        ):
-            assert det_group == int_group
-            detections_filtered.append(filter_detections(dets, ints))
-        detections_filtered = pd.concat(detections_filtered, ignore_index=True)
-    else:
-        detections_filtered = detections
+        # detections_filtered = []
+        # for (det_group, dets), (int_group, ints) in zip(
+        #     detections.groupby(series_id_column_name),
+        #     intervals.groupby(series_id_column_name),
+        # ):
+        #     assert det_group == int_group
+        #     detections_filtered.append(filter_detections(dets, ints))
+        # detections_filtered = pd.concat(detections_filtered, ignore_index=True)
+        pass
+    # else:
+    detections_filtered = detections
 
     # Create table of event-class x tolerance x series_id values
     aggregation_keys = pd.DataFrame(
@@ -434,16 +512,24 @@ def event_detection_ap(
     detections_grouped = aggregation_keys.merge(
         detections_filtered, on=[event_column_name, series_id_column_name], how="left"
     ).groupby([event_column_name, "tolerance", series_id_column_name])
+
     ground_truths_grouped = aggregation_keys.merge(
         ground_truths, on=[event_column_name, series_id_column_name], how="left"
     ).groupby([event_column_name, "tolerance", series_id_column_name])
+
     # Match detections to ground truth events by evaluation group
     detections_matched = []
     for key in aggregation_keys.itertuples(index=False):
         dets = detections_grouped.get_group(key)
         gts = ground_truths_grouped.get_group(key)
+        assert isinstance(dets, pd.DataFrame)
+        assert isinstance(gts, pd.DataFrame)
         detections_matched.append(
-            match_detections(dets["tolerance"].iloc[0], gts, dets)
+            match_detections(
+                tolerance=dets["tolerance"].iloc[0],
+                ground_truths=gts,
+                detections=dets,
+            )
         )
     detections_matched = pd.concat(detections_matched)
 

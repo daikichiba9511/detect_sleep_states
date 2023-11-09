@@ -1,7 +1,11 @@
-from typing import Protocol, Any
+from typing import Protocol, Any, Callable
 
 import torch
 import torch.nn as nn
+import segmentation_models_pytorch as smp
+
+
+from src import decoders, feature_extractors, augmentations
 
 
 class ResidualBiGRU(nn.Module):
@@ -266,6 +270,7 @@ class SleepTransformerEncoder(nn.Module):
         seq_model_dim: int = 320,
         seq_len: int = 3000,
         device: torch.device = torch.device("cuda"),
+        bs: int = 24,
     ):
         super().__init__()
         self.first_linear = nn.Linear(model_dim, embed_dim)
@@ -295,8 +300,11 @@ class SleepTransformerEncoder(nn.Module):
             data.to(device),
             requires_grad=True,
         )
+        self.bs = bs
 
-    def forward(self, x: torch.Tensor, training: bool = False) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, training: bool = False, bs: int = 24
+    ) -> torch.Tensor:
         """
         Args:
             x: (bs, seq_len, model_dim)
@@ -304,9 +312,10 @@ class SleepTransformerEncoder(nn.Module):
         Returns:
             x: (bs, seq_len, model_dim)
         """
-        bs, _, _ = x.shape
         x = self.first_linear(x)
-        if training:
+        # if training:
+        if False:
+            bs = self.bs
             # augmentation by randomly roll of the position encoding tensor
             tile = torch.tile(self.pos_encoding, dims=(bs, 1, 1))
             shifts = tuple(
@@ -316,7 +325,9 @@ class SleepTransformerEncoder(nn.Module):
             # print(f"{x.shape=}, {random_pos_encoding.shape=}")
             x = x + random_pos_encoding
         else:
-            tile = torch.tile(self.pos_encoding, (bs, 1, 1))
+            bs = x.shape[0]
+            # print(f"{x.shape=}, {self.pos_encoding.shape=}, {self.pos_encoding=}")
+            tile = torch.tile(input=self.pos_encoding, dims=(bs, 1, 1))
             x = x + tile
 
         x = self.first_dropout(x)
@@ -353,6 +364,7 @@ class SleepTransformer(nn.Module):
         out_dim: int = 2,
         device: torch.device = torch.device("cuda"),
         fc_hidden_size: int = 128,
+        bs: int = 24,
     ):
         super().__init__()
         self.encoder = SleepTransformerEncoder(
@@ -365,6 +377,7 @@ class SleepTransformer(nn.Module):
             seq_len=seq_len,
             seq_model_dim=seq_model_dim,
             device=device,
+            bs=bs,
         )
         self.fc = nn.Sequential(
             nn.Linear(embed_dim, fc_hidden_size),
@@ -451,6 +464,98 @@ class SleepRNNMocel(nn.Module):
         return out
 
 
+def made_sample_weights(labels: torch.Tensor) -> torch.Tensor:
+    num_zero_label = (labels == 0.0).sum().float()
+    sample_weights = labels.sum(dim=1, keepdim=False) / labels.shape[1]
+    sample_weights[sample_weights == 0.0] = num_zero_label
+    sample_weights = 1 / sample_weights
+    return sample_weights
+
+
+def weighted_loss(loss: torch.Tensor, sample_weights: torch.Tensor) -> torch.Tensor:
+    """Weighted loss function
+
+    Args:
+        loss: (batch_size, pred_len, n_classes)
+        sample_weights: (batch_size, n_classes)
+
+    Returns:
+        loss: 1-dim weighted loss that shape is (1, )
+    """
+    return (loss.mean(1) * sample_weights).mean()
+
+
+class Spectrogram2DCNN(nn.Module):
+    def __init__(
+        self,
+        feature_extractor: nn.Module,
+        decoder: nn.Module,
+        encoder_name: str,
+        in_channels: int,
+        encoder_weights: str | None = None,
+        use_sample_weights: bool = False,
+        spec_augment: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    ) -> None:
+        super().__init__()
+        self.feature_extractor = feature_extractor
+        self.encoder = smp.Unet(
+            encoder_name=encoder_name,
+            encoder_weights=encoder_weights,
+            in_channels=in_channels,
+            classes=1,
+        )
+        self.decoder = decoder
+        self.use_sample_weights = use_sample_weights
+        self.loss_fn = nn.BCEWithLogitsLoss(
+            reduction="none" if use_sample_weights else "mean"
+        )
+        self.spec_augment = spec_augment
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        labels: torch.Tensor | None = None,
+        do_mixup: bool = False,
+    ) -> dict[str, torch.Tensor]:
+        x = self.feature_extractor(x)  # (batch_size, n_channels, height, n_classes)
+
+        if do_mixup and labels is not None:
+            x, labels, mixed_labels, lam = augmentations.mixup(x, labels)
+        else:
+            mixed_labels, lam = None, None
+
+        if self.spec_augment is not None:
+            x = self.spec_augment(x)
+
+        x = self.encoder(x).squeeze(1)  # (batch_size, height, seq_len)
+        logits = self.decoder(x)  # (batch_size, n_classes, n_timesteps)
+        output = {"logits": logits}
+        if labels is not None:
+            # (batch_size, pred_len, n_classes)
+            loss = self.loss_fn(logits, labels)
+
+            # if self.use_sample_weights:
+            #     # label \in [0.0, 1.0]
+            #     # make sample_weights for each class
+            #     sample_weights = made_sample_weights(labels)
+            #     loss = weighted_loss(loss, sample_weights)
+            #
+            # if (
+            #     self.use_sample_weights
+            #     and do_mixup
+            #     and mixed_labels is not None
+            #     and lam is not None
+            # ):
+            #     sample_weights = made_sample_weights(mixed_labels)
+            #     mixed_loss = self.loss_fn(logits, mixed_labels)
+            #     mixed_loss = weighted_loss(mixed_loss, sample_weights)
+            #
+            #     loss = lam * loss + (1 - lam) * mixed_loss
+
+            output["loss"] = loss
+        return output
+
+
 class ModelConfig(Protocol):
     model_type: str
     input_size: int
@@ -461,9 +566,15 @@ class ModelConfig(Protocol):
     n_layers: int
     bidir: bool
     seq_len: int
+    batch_size: int
 
     train_seq_len: int
     transformer_params: dict[str, Any] | None
+    spectrogram2dcnn_params: dict[str, Any] | None
+    downsample_rate: int
+
+    use_spec_augment: bool
+    spec_augment_params: dict[str, Any] | None
 
 
 def build_model(config: ModelConfig) -> torch.nn.Module:
@@ -509,6 +620,47 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             seq_len=config.transformer_params["seq_len"],
             out_dim=config.out_size,
             fc_hidden_size=config.transformer_params["fc_hidden_dim"],
+            bs=config.batch_size,
+        )
+        return model
+
+    elif config.model_type == "Spectrogram2DCNN":
+        if config.spectrogram2dcnn_params is None:
+            raise ValueError("config.spectrogram2dcnn_params is None")
+        params = config.spectrogram2dcnn_params
+        feature_extractor = feature_extractors.CNNSpectgram(
+            in_channels=params["in_channels"],
+            base_filters=params["base_filters"],
+            kernel_size=params["kernel_size"],
+            stride=params["stride"],
+            sigmoid=params["sigmoid"],
+            output_size=params["output_size"] // params["downsample_rate"],
+        )
+        decoder = decoders.Unet1DDecoder(
+            n_channels=feature_extractor.height,
+            n_classes=params["n_classes"],
+            duration=params["seq_len"] // params["downsample_rate"],
+            bilinear=params["bilinear"],
+            se=params["se"],
+            res=params["res"],
+            scale_factor=params["scale_factor"],
+            dropout=params["dropout"],
+        )
+        if params["use_spec_augment"]:
+            assert params["spec_augment_params"] is not None
+            spec_augment = augmentations.made_spec_augment_func(
+                **params["spec_augment_params"]
+            )
+        else:
+            spec_augment = None
+        model = Spectrogram2DCNN(
+            feature_extractor,
+            decoder,
+            encoder_name=params["encoder_name"],
+            in_channels=feature_extractor.out_chans,
+            encoder_weights=params["encoder_weights"],
+            use_sample_weights=params["use_sample_weights"],
+            spec_augment=spec_augment,
         )
         return model
 
@@ -619,8 +771,174 @@ def _test_run_model4():
     print("pred: ", p.shape)
 
 
+def _test_run_model5():
+    from src import utils
+
+    print("Test5")
+    # device = torch.device("cuda")
+    device = torch.device("cpu")
+    seq_len = 24 * 60 * 4
+    downsample_rate = 2
+    params: dict[str, Any] = dict(
+        downsample_rate=downsample_rate,
+        # -- CNNSpectgram
+        in_channels=4,
+        base_filters=64,
+        kernel_size=[32, 16, downsample_rate],
+        stride=downsample_rate,
+        sigmoid=True,
+        output_size=seq_len,
+        # -- Unet1DDecoder
+        n_classes=3,
+        duration=seq_len,
+        bilinear=False,
+        se=False,
+        res=False,
+        scale_factor=2,
+        dropout=0.2,
+        # -- Spectrogram2DCNN
+        encoder_name="resnet18",
+        encoder_weights="imagenet",
+    )
+    feature_extractor = feature_extractors.CNNSpectgram(
+        in_channels=params["in_channels"],
+        base_filters=params["base_filters"],
+        kernel_size=params["kernel_size"],
+        stride=params["stride"],
+        sigmoid=params["sigmoid"],
+        output_size=params["output_size"] // params["downsample_rate"],
+    )
+    decoder = decoders.Unet1DDecoder(
+        n_channels=feature_extractor.height,
+        n_classes=params["n_classes"],
+        duration=params["duration"] // params["downsample_rate"],
+        bilinear=params["bilinear"],
+        se=params["se"],
+        res=params["res"],
+        scale_factor=params["scale_factor"],
+        dropout=params["dropout"],
+    )
+    model = Spectrogram2DCNN(
+        feature_extractor,
+        decoder,
+        encoder_name=params["encoder_name"],
+        in_channels=feature_extractor.out_chans,
+        encoder_weights=params["encoder_weights"],
+        use_sample_weights=True,
+    )
+    model = model.to(device).train()
+
+    num_features = 4
+    bs = 8 * 2
+
+    import pathlib
+    from pathlib import Path
+    from src import dataset
+
+    class Config:
+        seed: int = 42
+        batch_size: int = 32
+        num_workers: int = 0
+        # Used in build_dataloader
+        window_size: int = 10
+        root_dir: Path = Path(".")
+        input_dir: Path = root_dir / "input"
+        data_dir: Path = input_dir / "child-mind-institute-detect-sleep-states"
+        train_series_path: str | Path = (
+            input_dir / "for_train" / "train_series_fold.parquet"
+        )
+        train_events_path: str | Path = data_dir / "train_events.csv"
+        test_series_path: str | Path = data_dir / "test_series.parquet"
+
+        out_size: int = 3
+        series_dir: Path = Path("./output/series")
+        target_series_uni_ids_path: Path = series_dir / "target_series_uni_ids.pkl"
+
+        data_dir: pathlib.Path = pathlib.Path(
+            "./input/child-mind-institute-detect-sleep-states"
+        )
+        processed_dir: pathlib.Path = pathlib.Path("./input/processed")
+        seed: int
+
+        train_series: list[str] = [
+            "3df0da2e5966",
+            "05e1944c3818",
+            "bfe41e96d12f",
+            "062dbd4c95e6",
+            "1319a1935f48",
+            "67f5fc60e494",
+            "d2d6b9af0553",
+            "aa81faa78747",
+            "4a31811f3558",
+            "e2a849d283c0",
+            "361366da569e",
+            "2f7504d0f426",
+            "e1f5abb82285",
+            "e0686434d029",
+            "6bf95a3cf91c",
+            "a596ad0b82aa",
+            "8becc76ea607",
+            "12d01911d509",
+            "a167532acca2",
+        ]
+        valid_series: list[str] = [
+            "e0d7b0dcf9f3",
+            "519ae2d858b0",
+            "280e08693c6d",
+            "25e2b3dd9c3b",
+            "9ee455e4770d",
+            "0402a003dae9",
+            "78569a801a38",
+            "b84960841a75",
+            "1955d568d987",
+            "599ca4ed791b",
+            "971207c6a525",
+            "def21f50dd3c",
+            "8fb18e36697d",
+            "51b23d177971",
+            "c7b1283bb7eb",
+            "2654a87be968",
+            "af91d9a50547",
+            "a4e48102f402",
+        ]
+
+        seq_len: int = 24 * 60 * 4
+        """系列長の長さ"""
+        features: list[str] = ["anglez", "enmo", "hour_sin", "hour_cos"]
+
+        batch_size: int = 8
+
+        upsample_rate: float = 1.0
+        """default: 1.0"""
+        downsample_rate: int = 2
+        """default: 2"""
+
+        bg_sampling_rate: float = 0.5
+        """negative labelのサンプリング率. default: 0.5"""
+        offset: int = 10
+        """gaussian labelのoffset. default: 10"""
+        sigma: int = 10
+        """gaussian labelのsigma. default: 10"""
+        sample_per_epoch: int | None = None
+
+    dl = dataset.init_dataloader("train", Config)
+    batch = next(iter(dl))
+    x = batch["feature"].to(device)
+    y = batch["label"].to(device)
+
+    # x = torch.randn(bs, num_features, seq_len).to(device)
+    # print(x.shape)
+    with utils.trace("model forward"):
+        p = model(x, y)
+    print(type(p))
+    print(p["logits"].shape)
+    print(p["loss"].shape)
+    print(p["loss"])
+
+
 if __name__ == "__main__":
     # _test_run_model()
     # _test_run_model2()
     # _test_run_model3()
-    _test_run_model4()
+    # _test_run_model4()
+    _test_run_model5()

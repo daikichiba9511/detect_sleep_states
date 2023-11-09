@@ -1,5 +1,6 @@
 import time
 from logging import getLogger
+import pathlib
 from pathlib import Path
 from typing import Any, Callable, Literal, Protocol, Sequence, cast
 
@@ -15,24 +16,12 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from typing_extensions import TypeAlias
 
-from src.dataset import build_dataloader_v3
+from src import dataset
 from src.losses import build_criterion
 from src.models import build_model
 from src.utils import seed_everything
 
 logger = getLogger(__name__)
-
-
-def mixup(
-    x: torch.Tensor, y: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
-    rand_index = torch.randperm(x.size(0)).to(x.device)
-    shuffled_x = x[rand_index]
-    shuffled_y = y[rand_index]
-
-    lam = np.random.uniform(0.0, 1.0)
-    x_mix = lam * x + (1 - lam) * shuffled_x
-    return x_mix, y, shuffled_y, lam
 
 
 class AverageMeter:
@@ -347,9 +336,25 @@ class TrainConfig(Protocol):
     train_seq_len: int
 
     transformer_params: dict[str, Any] | None
-
     random_sequence_mixing: bool
-    sample_per_epoch: int
+    sample_per_epoch: int | None
+
+    spectrogram2dcnn_params: dict[str, Any] | None
+    data_dir: pathlib.Path
+    processed_dir: pathlib.Path
+    train_series: list[str]
+    valid_series: list[str]
+    features: list[str]
+
+    upsample_rate: float
+    """default: 1"""
+    downsample_rate: int
+    """default: 2"""
+    bg_sampling_rate: float
+    """negative sample rate for class 0 which is active"""
+
+    offset: int
+    num_features: list[str]
 
 
 def train_one_fold(
@@ -360,12 +365,14 @@ def train_one_fold(
     valid_one_epoch: Callable = valid_one_epoch,
     log_interval: int = 1,
     model_compile: bool = False,
+    compile_mode: str = "default",
 ) -> None:
     logger.info(f"Start training fold{fold}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(config).to(device)
     if model_compile:
-        model = cast(nn.Module, torch.compile(model, mode="default"))
+        print(f"Start model compile {config.use_amp = }, {compile_mode = }")
+        model = cast(nn.Module, torch.compile(model, mode=compile_mode, dynamic=True))
 
     model_params = list(model.named_parameters())
     no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
@@ -388,8 +395,10 @@ def train_one_fold(
     # dl_train = build_dataloader_v2(config, fold, "train", debug)
     # dl_valid = build_dataloader_v2(config, fold, "valid", debug)
 
-    dl_train = build_dataloader_v3(config, fold, "train", debug)
-    dl_valid = build_dataloader_v3(config, fold, "valid", debug)
+    # dl_train = dataset.build_dataloader_v3(config, fold, "train", debug)
+    # dl_valid = dataset.build_dataloader_v3(config, fold, "valid", debug)
+    dl_train = dataset.init_dataloader("train", config)
+    dl_valid = dataset.init_dataloader("valid", config)
 
     scaler = GradScaler(enabled=config.use_amp)
     early_stopping = EarlyStopping(**config.early_stopping_params)
@@ -419,6 +428,7 @@ def train_one_fold(
             criterion=criterion,
             device=device,
             seed=config.seed,
+            use_amp=config.use_amp,
         )
         valid_result = valid_one_epoch(
             epoch=epoch,
@@ -426,6 +436,7 @@ def train_one_fold(
             dl_valid=dl_valid,
             device=device,
             criterion=criterion,
+            use_amp=config.use_amp,
             seed=config.seed,
         )
         metrics_monitor.update(

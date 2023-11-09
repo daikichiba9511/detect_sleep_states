@@ -1,22 +1,75 @@
 import importlib
 from logging import getLogger
-from typing import Callable
+from typing import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import torch
+from torch.cuda.amp.autocast_mode import autocast
 import torch.nn as nn
+import torchvision.transforms.functional as TF
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from src.tools import AverageMeter
-from src.dataset import build_dataloader_v3, mean_std_normalize_label
+from src import dataset
 from src.losses import build_criterion
-from src.models import build_model, SleepTransformer
+from src.models import build_model, SleepTransformer, Spectrogram2DCNN
 from src import utils as my_utils
 
 logger = getLogger(__name__)
+
+
+def plot_random_sample(keys, preds, labels, num_samples=1, num_chunks=10):
+    import matplotlib.pyplot as plt
+
+    # get series ids
+    series_ids = np.array(list(map(lambda x: x.split("_")[0], keys)))
+    unique_series_ids = np.unique(series_ids)
+
+    # get random series
+    random_series_ids = np.random.choice(unique_series_ids, num_samples)
+    print(random_series_ids)
+
+    for i, random_series_id in enumerate(random_series_ids):
+        # get random series
+        series_idx = np.where(series_ids == random_series_id)[0]
+        this_series_preds = preds[series_idx].reshape(-1, 3)
+        this_series_labels = labels[series_idx].reshape(-1, 3)
+
+        # split series
+        this_series_preds = np.split(this_series_preds, num_chunks)
+        this_series_labels = np.split(this_series_labels, num_chunks)
+
+        fig, axs = plt.subplots(num_chunks, 1, figsize=(20, 5 * num_chunks))
+        if num_chunks == 1:
+            axs = [axs]
+        for j in range(num_chunks):
+            this_series_preds_chunk = this_series_preds[j]
+            this_series_labels_chunk = this_series_labels[j]
+
+            assert isinstance(axs, np.ndarray)
+            # get onset and wakeup idx
+            onset_idx = np.nonzero(this_series_labels_chunk[:, 1])[0]
+            wakeup_idx = np.nonzero(this_series_labels_chunk[:, 2])[0]
+
+            axs[j].plot(this_series_preds_chunk[:, 0], label="pred_sleep")
+            axs[j].plot(this_series_preds_chunk[:, 1], label="pred_onset")
+            axs[j].plot(this_series_preds_chunk[:, 2], label="pred_wakeup")
+            axs[j].vlines(
+                onset_idx, 0, 1, label="onset", linestyles="dashed", color="C1"
+            )
+            axs[j].vlines(
+                wakeup_idx, 0, 1, label="wakeup", linestyles="dashed", color="C2"
+            )
+            axs[j].set_ylim(0, 1)
+            axs[j].set_title(f"series_id: {random_series_id} chunk_id: {j}")
+            axs[j].legend(bbox_to_anchor=(1.05, 1), loc="upper left", borderaxespad=0)
+
+        fig.savefig(f"output/analysis/random_sample_{i}.png")  # type: ignore
+        plt.close("all")
 
 
 def _infer_for_transformer(
@@ -51,6 +104,20 @@ def _infer_for_transformer(
     return pred
 
 
+def _infer_for_seg(
+    model: nn.Module, X: torch.Tensor, device: torch.device, duration: int = 10
+) -> torch.Tensor:
+    # (BS, seq_len, n_class)
+    out = model(X)
+    logits = out["logits"]
+    resized_logits = TF.resize(
+        logits.detach().cpu().sigmoid(),
+        size=[duration, logits.shape[2]],
+        antialias=False,
+    )
+    return resized_logits
+
+
 class Runner:
     def __init__(
         self, configs, dataconfig, is_val: bool = False, device: str = "cuda"
@@ -63,10 +130,12 @@ class Runner:
     def _init_dl(self, debug: bool = False, fold: int = 0) -> DataLoader:
         logger.info("Debug mode: %s", debug)
         if self.is_val:
-            dl = build_dataloader_v3(self.dataconfig, fold, "valid", debug)
+            # dl = build_dataloader_v3(self.dataconfig, fold, "valid", debug)
+            dl = dataset.init_dataloader("valid", self.dataconfig)
             return dl
         else:
-            dl = build_dataloader_v3(self.dataconfig, fold, "test", debug)
+            # dl = build_dataloader_v3(self.dataconfig, fold, "test", debug)
+            dl = dataset.init_dataloader("test", self.dataconfig)
             return dl
 
     def _init_model(self, config, weight_path: str | Path) -> nn.Module:
@@ -76,162 +145,6 @@ class Runner:
         print(model.load_state_dict(state_dict))
         model = model.to(self.device).eval()
         return model
-
-    def _make_preds(
-        self,
-        model: nn.Module,
-        dl: DataLoader,
-        criterion: Callable | None = None,
-        losses: AverageMeter | None = None,
-    ) -> dict[str, np.ndarray]:
-        pbar = (
-            tqdm(enumerate(dl), total=len(dl), dynamic_ncols=True, leave=True)
-            if self.is_val
-            else enumerate(dl)
-        )
-        outs = {
-            "preds": [],
-            "steps": [],
-            "pred_use_array": [],
-            "series_ids": [],
-            "time_array": [],
-        }
-        for batch_idx, batch in pbar:
-            with torch.inference_mode():
-                input_data_num_array = batch["input_data_num_array"].to(
-                    self.device, non_blocking=True
-                )
-                input_data_mask_array = batch["input_data_mask_array"].to(
-                    self.device, non_blocking=True
-                )
-                attention_mask = batch["attention_mask"].to(
-                    self.device, non_blocking=True
-                )
-
-                # print(input_data_num_array.shape)
-                # print(input_data_mask_array.shape)
-                # print(attention_mask.shape)
-
-                logits = model(
-                    input_data_num_array,
-                    input_data_mask_array,
-                    attention_mask,
-                )
-                if criterion is not None and losses is not None:
-                    y = batch["y"].to(self.device, non_blocking=True)
-                    # print(logits.shape, y.shape)
-                    loss = criterion(
-                        logits[input_data_mask_array == 1],
-                        y[input_data_mask_array == 1],
-                    )
-                    losses.update(loss.item())
-                    assert isinstance(pbar, tqdm)
-                    pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
-                # (BS, seq_len, 3)
-                pred = logits.detach().cpu().float().softmax(-1).numpy()
-
-                outs["preds"].append(pred)
-                outs["steps"].append(batch["steps"].numpy())
-                outs["pred_use_array"].append(batch["pred_use_array"].numpy())
-                outs["series_ids"].append(np.array(batch["series_ids"]))
-
-        outputs = {}
-        outputs["preds"] = np.concatenate(outs["preds"], axis=0)
-        outputs["steps"] = np.concatenate(outs["steps"], axis=0)
-        outputs["pred_use_array"] = np.concatenate(outs["pred_use_array"], axis=0)
-        outputs["series_ids"] = np.concatenate(outs["series_ids"], axis=0)
-        return outputs
-
-    def _make_sub(self, outs: dict[str, np.ndarray]) -> pd.DataFrame:
-        preds = outs["preds"]
-        steps = outs["steps"]
-        pred_use_array = outs["pred_use_array"]
-        # TODO: series_idsがおかしい
-        series_ids = outs["series_ids"]
-
-        cnt = {}
-        for i in range(len(series_ids)):
-            if series_ids[i] not in cnt:
-                cnt[series_ids[i]] = 0
-            cnt[series_ids[i]] += 1
-        print(cnt)
-
-        preds_list = []
-        for i in range(len(pred_use_array)):
-            mask_ = pred_use_array[i] == 1
-            preds_ = preds[i][mask_]
-            steps_ = steps[i][mask_]
-            series_ids_ = series_ids[i]
-            df_ = pd.DataFrame()
-            df_["step"] = steps_
-            df_["prob_noevent"] = preds_[:, 0]
-            df_["prob_onset"] = preds_[:, 1]
-            df_["prob_wakeup"] = preds_[:, 2]
-            df_["series_id"] = series_ids_
-            preds_list.append(df_)
-
-        df_preds = pd.concat(preds_list, axis=0)
-        df_preds = df_preds.groupby(["series_id", "step"]).max().reset_index()
-
-        df_preds["prob_noevent"] = df_preds["prob_noevent"].clip(0.0005, 0.9995)
-        df_preds["prob_onset"] = df_preds["prob_onset"].clip(0.005, 0.9995)
-        df_preds["prob_wakeup"] = df_preds["prob_wakeup"].clip(0.005, 0.9995)
-
-        print(df_preds)
-        print(df_preds.groupby("series_id").mean())
-        print(df_preds.groupby("series_id").max())
-        print("#########################################")
-        print(df_preds[["prob_noevent", "prob_onset", "prob_wakeup"]][:10])
-        print(
-            df_preds["prob_noevent"].max(),
-            df_preds["prob_noevent"].min(),
-            df_preds["prob_noevent"].mean(),
-        )
-        print(
-            df_preds["prob_onset"].max(),
-            df_preds["prob_onset"].min(),
-            df_preds["prob_onset"].mean(),
-        )
-        print(
-            df_preds["prob_wakeup"].max(),
-            df_preds["prob_wakeup"].min(),
-            df_preds["prob_wakeup"].mean(),
-        )
-        print("#########################################")
-
-        onse_thr = 0.95
-        wake_thr = 0.95
-
-        # onset event
-        df_preds["pred_onset"] = (df_preds["prob_onset"] > onse_thr).astype(int)
-        df_preds_onset = df_preds[df_preds["pred_onset"] == 1]
-        # assert df_preds_onset.shape[0] > 0, f"pred_onset: {df_preds_onset.shape}"
-        df_preds_onset.loc[:, "event"] = "onset"
-        df_preds_onset = df_preds_onset[["series_id", "step", "event", "prob_onset"]]
-        df_preds_onset.columns = ["series_id", "step", "event", "score"]
-
-        # wakeup event
-        df_preds["pred_wakeup"] = (df_preds["prob_wakeup"] > wake_thr).astype(int)
-        df_preds_wakeup = df_preds[df_preds["pred_wakeup"] == 1]
-        # assert df_preds_wakeup.shape[0] > 0, f"pred_wakeup: {df_preds_wakeup.shape}"
-        df_preds_wakeup.loc[:, "event"] = "wakeup"
-        df_preds_wakeup = df_preds_wakeup[["series_id", "step", "event", "prob_wakeup"]]
-        df_preds_wakeup.columns = ["series_id", "step", "event", "score"]
-
-        submission = (
-            pd.concat([df_preds_onset, df_preds_wakeup], axis=0)
-            .sort_values(["series_id", "step"])
-            .reset_index(drop=True)
-        )
-
-        print("############# SUBMISSION ##############")
-        print(submission)
-        print("#################################")
-
-        submission["row_id"] = submission.index.astype(int)
-        submission["score"] = submission["score"].fillna(submission["score"].mean())
-        submission = submission[["row_id", "series_id", "step", "event", "score"]]
-        return submission
 
     def _make_pred_v3(
         self,
@@ -280,6 +193,7 @@ class Runner:
                 for i, model in enumerate(models):
                     if isinstance(model, SleepTransformer):
                         pred_ = _infer_for_transformer(model, batch[0], self.device)
+
                     else:
                         pred_ = self._make_pred_v3(model, batch, chunk_size)
                     pred.append(pred_.detach().cpu().float())
@@ -376,7 +290,81 @@ class Runner:
 
         return outputs
 
-    def run(self, debug: bool = False, fold: int = 0) -> pd.DataFrame:
+    def _make_sub_for_seg(
+        self,
+        models: Sequence[nn.Module],
+        dl: DataLoader,
+        loss_fn: Callable | None,
+        loss_monitor: AverageMeter | None,
+        use_amp: bool = False,
+        duration: int = 10,
+        score_thr: float = 0.5,
+        distance: int = 24 * 60 * 12,
+    ) -> dict[str, pl.DataFrame]:
+        print("Infer Duration => ", duration)
+        # onset_losses = AverageMeter("onset_loss")
+        # wakeup_losses = AverageMeter("wakeup_loss")
+        # total_sub = pd.DataFrame()
+        labels_all = []
+        preds = []
+        keys = []
+
+        pbar = tqdm(enumerate(dl), total=len(dl), dynamic_ncols=True, leave=True)
+        with torch.inference_mode(), autocast(use_amp):
+            for _, batch in pbar:
+                x = batch["feature"].to(self.device, non_blocking=True)
+                keys.extend(batch["key"])
+                logits_this_batch = []
+
+                # Make preds for this batch
+                pred_this_batch = []
+                for model in models:
+                    out = model(x)
+                    # (BS, pred_length, n_class), pred_length = duration // downsample_rate
+                    logits = out["logits"]
+                    pred = logits.detach().cpu().float().sigmoid()
+                    pred = TF.resize(
+                        pred, size=[duration, pred.shape[2]], antialias=False
+                    )
+                    logits_this_batch.append(logits.detach().cpu().float())
+                    pred_this_batch.append(pred.numpy())
+
+                # Aggregate preds for this batch
+                pred_this_batch = np.concatenate(pred_this_batch)
+                if len(models) > 1:
+                    pred_this_batch = pred_this_batch.max(0)
+                preds.append(pred_this_batch)
+
+                # Only for validation
+                if loss_fn is not None and loss_monitor is not None:
+                    logits = torch.concat(logits_this_batch)
+                    if len(models) != 1:
+                        logits = logits.max(0)
+                    labels = batch["label"].to(logits.device)
+                    loss = loss_fn(logits, labels)
+                    loss_monitor.update(loss.item())
+                    labels_all.append(labels.detach().cpu().numpy())
+
+        preds = np.concatenate(preds)
+        print("preds.shape: ", preds.shape, "len(keys): ", len(keys))
+        assert preds.shape[0] == len(keys), f"{preds.shape=}, {len(keys)=}"
+        sub_df = my_utils.post_process_for_seg(
+            keys, preds[:, :, [1, 2]], score_thr=score_thr, distance=distance
+        )
+        if self.is_val:
+            labels_all = np.concatenate(labels_all)
+            plot_random_sample(keys, preds, labels_all, num_samples=5, num_chunks=10)
+
+        outs = {"submission": sub_df}
+        return outs
+
+    def run(
+        self,
+        debug: bool = False,
+        fold: int = 0,
+        score_thr: float = 0.02,
+        distance: int = 24 * 60 * 12,
+    ) -> pd.DataFrame:
         models = []
         for config in self.configs:
             model = self._init_model(config, config.model_save_path)
@@ -384,7 +372,7 @@ class Runner:
 
         dl = self._init_dl(debug, fold)
         if self.is_val:
-            criterion_type = "MSELoss"
+            criterion_type = "BCEWithLogitsLoss"
             logger.info("Criterion: %s", criterion_type)
             criterion = build_criterion(criterion_type)
             losses_meter = AverageMeter("loss")
@@ -392,16 +380,29 @@ class Runner:
             criterion = None
             losses_meter = None
 
-        chunk_size = self.configs[0].infer_chunk_size
-
         with my_utils.timer("start inference"):
-            outs = self._make_sub_v3(
-                models, dl, criterion, losses_meter, chunk_size=chunk_size
+            # outs = self._make_sub_v3(
+            #     models, dl, criterion, losses_meter, chunk_size=chunk_size
+            # )
+            # TODO: durationとかをmodelごとに渡せるようにする, あまり意味ないか？
+            outs = self._make_sub_for_seg(
+                models,
+                dl,
+                criterion,
+                losses_meter,
+                use_amp=self.configs[0].use_amp,
+                duration=self.configs[0].seq_len,
+                score_thr=self.configs[0].postprocess_params["score_thr"],
+                distance=self.configs[0].postprocess_params["distance"],
             )
+            print(outs)
 
         # submission = self._make_sub(outs)
-        submission = outs["submission"]
-        assert isinstance(submission, pd.DataFrame)
+        submission = (
+            outs["submission"]
+            .to_pandas(use_pyarrow_extension_array=True)
+            .reset_index(drop=True)
+        )
 
         if self.is_val and losses_meter is not None:
             logger.info(f"fold: {fold}, loss: {losses_meter.avg:.5f}")

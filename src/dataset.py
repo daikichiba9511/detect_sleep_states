@@ -1,16 +1,20 @@
+import pathlib
+import random
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Sequence, cast
 
+import multiprocessing as mp
+import joblib
 import numpy as np
 import pandas as pd
 import polars as pl
 import torch
+import torchvision.transforms.functional as TF
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
-import joblib
+from src import utils as my_utils
 from src.fe import make_sequence_chunks
-from src.utils import seed_everything
 
 pl.Config.set_tbl_cols(n=300)
 
@@ -27,11 +31,13 @@ class SleepDataset(Dataset):
         series_ids,
         series: pd.DataFrame,
         window_size: int = 12,
+        sample_per_epoch: int | None = None,
     ):
         self.phase = phase
         self.window_size = window_size
         self.series = series.reset_index()
         self.series_ids = series_ids
+        self.sample_per_epoch = sample_per_epoch
         self.data = []
 
         for viz_id in tqdm(self.series_ids, desc="Loading data"):
@@ -59,7 +65,9 @@ class SleepDataset(Dataset):
         return np.dstack([feat_mean, feat_std, feat_median, feat_max, feat_min])[0]
 
     def __len__(self):
-        return len(self.data)
+        return (
+            len(self.data) if self.sample_per_epoch is None else self.sample_per_epoch
+        )
 
     def __getitem__(self, index):
         row = self.data[index]
@@ -199,7 +207,7 @@ def build_dataloader(
             num_workers=config.num_workers,
             pin_memory=True,
             drop_last=True,
-            worker_init_fn=lambda _: seed_everything(config.seed),
+            worker_init_fn=lambda _: my_utils.seed_everything(config.seed),
             collate_fn=collate_fn,
         )
         return dl_train
@@ -550,7 +558,7 @@ def build_dataloader_v2(
             num_workers=config.num_workers,
             pin_memory=True,
             drop_last=True,
-            worker_init_fn=lambda _: seed_everything(config.seed),
+            worker_init_fn=lambda _: my_utils.seed_everything(config.seed),
             # collate_fn=collate_fn,
         )
         return dl_train
@@ -992,11 +1000,513 @@ def build_dataloader_v3(
             num_workers=num_workers,
             pin_memory=True,
             drop_last=True,
-            worker_init_fn=lambda _: seed_everything(config.seed),
+            worker_init_fn=lambda _: my_utils.seed_everything(config.seed),
             # collate_fn=collate_fn,
             persistent_workers=True,  # data loaderが使い終わったProcessをkillしない
         )
         return dl_train
+
+
+############################################
+# SleepSegDataset
+############################################
+def load_features(
+    feature_names: Sequence[str],
+    series_ids: Sequence[str] | None,
+    processed_dir: Path,
+    phase: str,
+) -> dict[str, np.ndarray]:
+    features = {}
+
+    if series_ids is None:
+        series_ids = [
+            series_dir.name for series_dir in (processed_dir / phase).glob("*")
+        ]
+
+    for series_id in tqdm(series_ids, desc="Load features"):
+        series_dir = processed_dir / series_id
+        this_features = [
+            np.load(series_dir / f"{feature_name}.npy")
+            for feature_name in feature_names
+        ]
+        features[series_id] = np.stack(this_features, axis=1)
+    return features
+
+
+def load_chunk_features(
+    seq_len: int,
+    feature_names: Sequence[str],
+    series_ids: Sequence[str] | None,
+    processed_dir: Path,
+    phase: str,
+) -> dict[str, np.ndarray]:
+    if series_ids is None:
+        series_ids = [
+            series_dir.name for series_dir in (processed_dir / phase).glob("*")
+        ]
+
+    def _load_chunk(i, seq_len, this_features) -> np.ndarray:
+        chunk_features = this_features[i * seq_len : (i + 1) * seq_len]
+        # chunk_features = (series_dir, feature_names, i, seq_len)
+        chunk_features = my_utils.pad_if_needed(chunk_features, seq_len, pad_value=0)
+        # chunk_features = chunk_features.transpose(1, 0)
+        return chunk_features
+
+    features = {}
+    for series_id in tqdm(series_ids, desc="Load features"):
+        series_dir = processed_dir / series_id
+
+        # (steps, n_features)
+        this_features = []
+        for feature_name in feature_names:
+            this_features.append(np.load(series_dir / f"{feature_name}.npy"))
+        this_features = np.stack(this_features, axis=1)
+
+        num_chunks = (len(this_features) // seq_len) + 1
+        for i in range(num_chunks):
+            features[f"{series_id}_{i:07}"] = _load_chunk(i, seq_len, this_features)
+    return features
+
+
+def random_crop(pos: int, duration: int, max_end: int) -> tuple[int, int]:
+    # 0 <= start <= pos - duration
+    start = random.randint(max(0, pos - duration), min(pos, max_end - duration))
+    end = start + duration
+    return start, end
+
+
+def make_label(
+    this_event_df: pd.DataFrame, num_frames: int, duration: int, start: int, end: int
+) -> np.ndarray:
+    this_event_df = this_event_df.query("@start <= wakeup & onset <= @end")
+
+    label = np.zeros((num_frames, 3))
+    for onset, wakeup in this_event_df[["onset", "wakeup"]].to_numpy():
+        # make relative position in the num_frames
+        onset = int((onset - start) / duration * num_frames)
+        wakeup = int((wakeup - start) / duration * num_frames)
+        if 0 <= onset < num_frames:
+            label[onset, 1] = 1
+        if 0 <= wakeup < num_frames:
+            label[wakeup, 2] = 1
+
+        onset = max(0, onset)
+        wakeup = min(num_frames, wakeup)
+        label[onset:wakeup, 0] = 1  # 0: sleep
+    return label
+
+
+def gaussian_kernel(length: int, sigma: float) -> np.ndarray:
+    x = cast(np.ndarray, np.ogrid[-length : length + 1])
+    g = np.exp(-(x**2 / (2 * sigma**2)))
+    g[g < np.finfo(g.dtype).eps * g.max()] = 0
+    return g
+
+
+def gaussian_label(label: np.ndarray, offset: int, sigma: int) -> np.ndarray:
+    """
+    Args:
+        label: (num_frames, n_classes)
+    """
+    num_events = label.shape[1]
+    for i in range(num_events):
+        label[:, i] = np.convolve(
+            label[:, i], gaussian_kernel(offset, sigma), mode="same"
+        )
+    return label
+
+
+def negative_sampling(this_event_df: pd.DataFrame, num_steps: int) -> int:
+    pos_positions = set(
+        this_event_df[["onset", "wakeup"]].to_numpy().flatten().tolist()
+    )
+    neg_positions = list(set(range(num_steps)) - pos_positions)
+    return random.sample(neg_positions, 1)[0]
+
+
+def nearest_valid_size(input_size: int, downsample_factor: int) -> int:
+    while (input_size // downsample_factor) % 32 != 0:
+        input_size += 1
+    return input_size
+
+
+class TrainSegDatasetConfig(Protocol):
+    data_dir: pathlib.Path
+    processed_dir: pathlib.Path
+    seed: int
+
+    train_series: list[str]
+
+    features: list[str]
+
+    seq_len: int
+    """系列長の長さ"""
+    upsample_rate: float
+    downsample_rate: int
+    bg_sampling_rate: float
+    offset: int
+    sigma: int
+
+
+class SleepSegTrainDataset(Dataset):
+    def __init__(
+        self,
+        cfg: TrainSegDatasetConfig,
+        df: pl.DataFrame,
+        features: dict[str, np.ndarray],
+        sample_per_epoch: int | None,
+    ) -> None:
+        self.cfg = cfg
+        self.event_df = (
+            df.pivot(index=["series_id", "night"], columns="event", values="step")
+            .drop_nulls()
+            .to_pandas(use_pyarrow_extension_array=True)
+        )
+        self.features = features
+        self.num_features = len(cfg.features)
+        self.upsampled_num_frames = nearest_valid_size(
+            int(cfg.seq_len * cfg.upsample_rate), cfg.downsample_rate
+        )
+        self.sample_per_epoch = sample_per_epoch
+        self.bg_sampling_rate = cfg.bg_sampling_rate
+
+    def __len__(self) -> int:
+        return (
+            len(self.event_df)
+            if self.sample_per_epoch is None
+            else self.sample_per_epoch
+        )
+
+    def __getitem__(self, index):
+        event = np.random.choice(["onset", "wakeup"], p=[0.5, 0.5])  # type: ignore
+        pos = self.event_df.at[index, event]
+        series_id = self.event_df.at[index, "series_id"]
+        this_event_row = self.event_df.query("series_id == @series_id")
+        this_event_row = this_event_row.reset_index(drop=True)
+        this_features = self.features[series_id]
+        n_steps = len(this_features)
+
+        if random.random() < self.bg_sampling_rate:
+            pos = negative_sampling(this_event_row, n_steps)
+
+        # crop
+        start, end = random_crop(pos, self.cfg.seq_len, n_steps)
+        feature = this_features[start:end]  # (seq_len, num_features)
+
+        # upsample seq_len to upsampled_num_frames
+        # (1, num_features, seq_len)
+        feature = torch.FloatTensor(feature.T).unsqueeze(0)
+        feature = TF.resize(
+            feature,
+            size=[self.num_features, self.upsampled_num_frames],
+            antialias=False,
+        )
+        feature = feature.squeeze(0)
+
+        # hard label to gaussian label
+        # lengthをdownsamplingする
+        num_frames = self.upsampled_num_frames // self.cfg.downsample_rate
+        label = make_label(this_event_row, num_frames, self.cfg.seq_len, start, end)
+        label = label.astype(np.float32)
+        label[:, [1, 2]] = gaussian_label(
+            label[:, [1, 2]], self.cfg.offset, self.cfg.sigma
+        )
+
+        return {
+            "series_id": series_id,
+            "feature": feature,  # (num_features, upsampled_num_frames)
+            "label": torch.FloatTensor(label),  # (num_frames, 3)
+        }
+
+
+class ValidSegDatasetConfig(Protocol):
+    data_dir: pathlib.Path
+    processed_dir: pathlib.Path
+    seed: int
+
+    valid_series: list[str]
+
+    seq_len: int
+    """系列長の長さ"""
+    upsample_rate: float
+    downsample_rate: int
+    features: list[str]
+
+
+class SleepSegValidDataset(Dataset):
+    def __init__(
+        self,
+        cfg: ValidSegDatasetConfig,
+        chunk_features: dict[str, np.ndarray],
+        df: pl.DataFrame,
+    ):
+        self.cfg = cfg
+        self.chunk_features = chunk_features
+        self.keys = list(chunk_features.keys())
+        self.event_df = (
+            df.pivot(index=["series_id", "night"], columns="event", values="step")
+            .drop_nulls()
+            .to_pandas(use_pyarrow_extension_array=True)
+        )
+        self.num_features = len(chunk_features)
+        self.upsampled_num_frames = nearest_valid_size(
+            int(cfg.seq_len * cfg.upsample_rate), cfg.downsample_rate
+        )
+        self.num_features = len(cfg.features)
+
+    def __len__(self) -> int:
+        return len(self.keys)
+
+    def __getitem__(self, index: int):
+        key = self.keys[index]
+        feature = self.chunk_features[key]
+        # (1, num_features, seq_len)
+        feature = torch.FloatTensor(feature.T).unsqueeze(0)
+        feature = TF.resize(
+            feature,
+            size=[self.num_features, self.upsampled_num_frames],
+            antialias=False,
+        )
+        feature = feature.squeeze(0)
+        series_id, chunk_id = key.split("_")
+        chunk_id = int(chunk_id)
+        start = chunk_id * self.cfg.seq_len
+        end = start + self.cfg.seq_len
+        num_frames = self.upsampled_num_frames // self.cfg.downsample_rate
+        label = make_label(
+            self.event_df.query("series_id == @series_id").reset_index(drop=True),
+            num_frames,
+            self.cfg.seq_len,
+            start,
+            end,
+        )
+        return {
+            "key": key,
+            "feature": feature,  # (num_features, upsampled_num_frames)
+            "label": torch.FloatTensor(label),  # (seq_len, 3)
+        }
+
+
+class TestSegDatasetConfig(Protocol):
+    data_dir: pathlib.Path
+    processed_dir: pathlib.Path
+    seed: int
+
+    seq_len: int
+    """系列長の長さ"""
+    upsample_rate: float
+    downsample_rate: int
+    features: list[str]
+
+
+class SleepSegTestDataset(Dataset):
+    def __init__(
+        self, cfg: TestSegDatasetConfig, chunk_features: dict[str, np.ndarray]
+    ) -> None:
+        self.cfg = cfg
+        self.chunk_features = chunk_features
+        self.keys = list(chunk_features.keys())
+        self.num_features = len(cfg.features)
+        self.upsampled_num_frames = nearest_valid_size(
+            int(cfg.seq_len * cfg.upsample_rate), cfg.downsample_rate
+        )
+
+    def __len__(self) -> int:
+        return len(self.keys)
+
+    def __getitem__(self, index: int):
+        key = self.keys[index]
+        features = self.chunk_features[key]
+        # (1, num_features, seq_len)
+        feature = torch.FloatTensor(features.T).unsqueeze(0)
+        feature = TF.resize(
+            feature,
+            size=[self.num_features, self.upsampled_num_frames],
+            antialias=False,
+        )
+        feature = feature.squeeze(0)
+
+        return {
+            "key": key,
+            "feature": feature,  # (num_features, upsampled_num_frames)
+        }
+
+
+class DataloaderConfigV4(Protocol):
+    data_dir: pathlib.Path
+    processed_dir: pathlib.Path
+    seed: int
+
+    train_series: list[str]
+    valid_series: list[str]
+
+    sample_per_epoch: int | None
+
+    seq_len: int
+    """系列長の長さ"""
+    features: list[str]
+
+    batch_size: int
+
+    upsample_rate: float
+    """default: 1.0"""
+    downsample_rate: int
+    """default: 2"""
+
+    bg_sampling_rate: float
+    """negative labelのサンプリング率. default: 0.5"""
+    offset: int
+    """gaussian labelのoffset. default: 10"""
+    sigma: int
+    """gaussian labelのsigma. default: 10"""
+    num_features: list[str]
+
+
+def _init_test_dl(
+    cfg,
+    processed_dir: Path,
+    seq_len: int,
+    features: list[str],
+    num_workers: int,
+    seed: int,
+) -> DataLoader:
+    feature_dir = pathlib.Path(processed_dir)
+    series_ids = [x.name for x in feature_dir.glob("*")]
+    chunk_features = load_chunk_features(
+        seq_len=seq_len,
+        feature_names=features,
+        series_ids=series_ids,
+        processed_dir=processed_dir,
+        phase="test",
+    )
+    ds = SleepSegTestDataset(cfg, chunk_features)
+    dl = DataLoader(
+        ds,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+        worker_init_fn=lambda _: my_utils.seed_everything(seed),
+        # collate_fn=collate_fn,
+        persistent_workers=True,  # data loaderが使い終わったProcessをkillしない
+    )
+    return dl
+
+
+def _init_valid_dl(
+    cfg,
+    data_dir: pathlib.Path,
+    processed_dir: pathlib.Path,
+    batch_size: int,
+    seq_len: int,
+    valid_series: list[str],
+    features: list[str],
+    num_workers: int,
+    seed: int,
+) -> DataLoader:
+    event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
+    valid_event_df = event_df.filter(pl.col("series_id").is_in(valid_series))
+    valid_chunk_features = load_chunk_features(
+        seq_len=seq_len,
+        feature_names=features,
+        series_ids=valid_series,
+        processed_dir=processed_dir,
+        phase="valid",
+    )
+    ds = SleepSegValidDataset(cfg, valid_chunk_features, valid_event_df)
+    dl = DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+        worker_init_fn=lambda _: my_utils.seed_everything(seed),
+        # collate_fn=collate_fn,
+        persistent_workers=True,  # data loaderが使い終わったProcessをkillしない
+    )
+    return dl
+
+
+def _init_train_dl(
+    cfg,
+    data_dir: pathlib.Path,
+    processed_dir: pathlib.Path,
+    batch_size: int,
+    seq_len: int,
+    train_series: list[str],
+    features: list[str],
+    num_workers: int,
+    seed: int,
+    sample_per_epoch: int | None = None,
+) -> DataLoader:
+    event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
+    train_event_df = event_df.filter(pl.col("series_id").is_in(train_series))
+    train_features = load_features(
+        feature_names=features,
+        series_ids=train_series,
+        processed_dir=processed_dir,
+        phase="train",
+    )
+    ds = SleepSegTrainDataset(
+        cfg, train_event_df, train_features, sample_per_epoch=sample_per_epoch
+    )
+    dl = DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=True,
+        # shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        worker_init_fn=lambda _: my_utils.seed_everything(seed),
+        # collate_fn=collate_fn,
+        persistent_workers=True,  # data loaderが使い終わったProcessをkillしない
+    )
+    return dl
+
+
+def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
+    num_workers = 8 if mp.cpu_count() > 8 else 4
+
+    if phase == "test":
+        return _init_test_dl(
+            cfg=cfg,
+            processed_dir=cfg.processed_dir,
+            seed=cfg.seed,
+            num_workers=num_workers,
+            seq_len=cfg.seq_len,
+            features=cfg.features,
+        )
+
+    if phase == "valid":
+        return _init_valid_dl(
+            cfg=cfg,
+            seed=cfg.seed,
+            num_workers=num_workers,
+            batch_size=cfg.batch_size,
+            valid_series=cfg.valid_series,
+            seq_len=cfg.seq_len,
+            features=cfg.features,
+            data_dir=cfg.data_dir,
+            processed_dir=cfg.processed_dir,
+        )
+
+    # Train
+    # featuresはscripts/prepare_data.pyで作成したもの
+    return _init_train_dl(
+        cfg=cfg,
+        seed=cfg.seed,
+        num_workers=num_workers,
+        batch_size=cfg.batch_size,
+        train_series=cfg.train_series,
+        seq_len=cfg.seq_len,
+        features=cfg.features,
+        data_dir=cfg.data_dir,
+        processed_dir=cfg.processed_dir,
+        sample_per_epoch=cfg.sample_per_epoch,
+    )
 
 
 ############################################
@@ -1309,10 +1819,238 @@ def test_build_dl_v3():
     print(step)
 
 
+def test_build_dl_v4():
+    class Config:
+        seed: int = 42
+        batch_size: int = 32
+        num_workers: int = 0
+        # Used in build_dataloader
+        window_size: int = 10
+        root_dir: Path = Path(".")
+        input_dir: Path = root_dir / "input"
+        data_dir: Path = input_dir / "child-mind-institute-detect-sleep-states"
+        train_series_path: str | Path = (
+            input_dir / "for_train" / "train_series_fold.parquet"
+        )
+        train_events_path: str | Path = data_dir / "train_events.csv"
+        test_series_path: str | Path = data_dir / "test_series.parquet"
+
+        out_size: int = 3
+        series_dir: Path = Path("./output/series")
+        target_series_uni_ids_path: Path = series_dir / "target_series_uni_ids.pkl"
+
+        data_dir: pathlib.Path = pathlib.Path(
+            "./input/child-mind-institute-detect-sleep-states"
+        )
+        processed_dir: pathlib.Path = pathlib.Path("./input/processed")
+        seed: int
+
+        train_series: list[str] = [
+            "3df0da2e5966",
+            "05e1944c3818",
+            "bfe41e96d12f",
+            "062dbd4c95e6",
+            "1319a1935f48",
+            "67f5fc60e494",
+            "d2d6b9af0553",
+            "aa81faa78747",
+            "4a31811f3558",
+            "e2a849d283c0",
+            "361366da569e",
+            "2f7504d0f426",
+            "e1f5abb82285",
+            "e0686434d029",
+            "6bf95a3cf91c",
+            "a596ad0b82aa",
+            "8becc76ea607",
+            "12d01911d509",
+            "a167532acca2",
+        ]
+        valid_series: list[str] = [
+            "e0d7b0dcf9f3",
+            "519ae2d858b0",
+            "280e08693c6d",
+            "25e2b3dd9c3b",
+            "9ee455e4770d",
+            "0402a003dae9",
+            "78569a801a38",
+            "b84960841a75",
+            "1955d568d987",
+            "599ca4ed791b",
+            "971207c6a525",
+            "def21f50dd3c",
+            "8fb18e36697d",
+            "51b23d177971",
+            "c7b1283bb7eb",
+            "2654a87be968",
+            "af91d9a50547",
+            "a4e48102f402",
+        ]
+
+        seq_len: int = 24 * 60 * 4
+        """系列長の長さ"""
+        features: list[str] = ["anglez", "enmo", "hour_sin", "hour_cos"]
+
+        batch_size: int = 8
+
+        upsample_rate: float = 1.0
+        """default: 1.0"""
+        downsample_rate: int = 2
+        """default: 2"""
+
+        bg_sampling_rate: float = 0.5
+        """negative labelのサンプリング率. default: 0.5"""
+        offset: int = 10
+        """gaussian labelのoffset. default: 10"""
+        sigma: int = 10
+        """gaussian labelのsigma. default: 10"""
+        sample_per_epoch: int | None = None
+
+    with my_utils.trace("dataset load"):
+        # dl = init_dataloader("train", Config)
+        dl = init_dataloader("valid", Config)
+
+    batch = next(iter(dl))
+    print(type(batch))
+    print(len(batch))
+    print(batch.keys())
+
+    print(batch["feature"].shape)
+    print(batch["label"].shape)
+    # print(batch["series_id"])
+
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, len(batch["label"]), figsize=(20, 10))
+    for i in range(len(batch["label"])):
+        labels = batch["label"][i]
+        sleep = labels[:, 0]
+        onset = labels[:, 1]
+        wakeup = labels[:, 2]
+        # print(sleep[sleep > 0.0])
+        # print(onset[onset > 0.0])
+        # print(wakeup[wakeup > 0.0])
+        # axes.plot(batch["feature"][b_idx, 0, :], label="anglez")  # type: ignore
+        # axes.plot(batch["feature"][b_idx, 1, :], label="enmo")  # type: ignore
+        # axes.plot(batch["feature"][b_idx, 2, :], label="hour_sin")  # type: ignore
+        # axes.plot(batch["feature"][b_idx, 3, :], label="hour_cos")  # type: ignore
+        axes[i].plot(sleep, label="sleep", alpha=0.5)  # type: ignore
+        axes[i].plot(onset, label="onset", alpha=0.5)  # type: ignore
+        axes[i].plot(wakeup, label="wakeup", alpha=0.5)  # type: ignore
+        series_id = batch.get("series_id", batch["key"][i].split("_")[0])
+        axes[i].set_title(f"sid: {series_id}")
+        axes[i].legend()  # type: ignore
+    plt.savefig("./output/eda/test_build_dl_v4.png")
+
+
+def _test_load_chunk_features():
+    class Config:
+        seed: int = 42
+        batch_size: int = 32
+        num_workers: int = 0
+        # Used in build_dataloader
+        window_size: int = 10
+        root_dir: Path = Path(".")
+        input_dir: Path = root_dir / "input"
+        data_dir: Path = input_dir / "child-mind-institute-detect-sleep-states"
+        train_series_path: str | Path = (
+            input_dir / "for_train" / "train_series_fold.parquet"
+        )
+        train_events_path: str | Path = data_dir / "train_events.csv"
+        test_series_path: str | Path = data_dir / "test_series.parquet"
+
+        out_size: int = 3
+        series_dir: Path = Path("./output/series")
+        target_series_uni_ids_path: Path = series_dir / "target_series_uni_ids.pkl"
+
+        data_dir: pathlib.Path = pathlib.Path(
+            "./input/child-mind-institute-detect-sleep-states"
+        )
+        processed_dir: pathlib.Path = pathlib.Path("./input/processed")
+        seed: int
+
+        train_series: list[str] = [
+            "3df0da2e5966",
+            "05e1944c3818",
+            "bfe41e96d12f",
+            "062dbd4c95e6",
+            "1319a1935f48",
+            "67f5fc60e494",
+            "d2d6b9af0553",
+            "aa81faa78747",
+            "4a31811f3558",
+            "e2a849d283c0",
+            "361366da569e",
+            "2f7504d0f426",
+            "e1f5abb82285",
+            "e0686434d029",
+            "6bf95a3cf91c",
+            "a596ad0b82aa",
+            "8becc76ea607",
+            "12d01911d509",
+            "a167532acca2",
+        ]
+        valid_series: list[str] = [
+            "e0d7b0dcf9f3",
+            "519ae2d858b0",
+            "280e08693c6d",
+            "25e2b3dd9c3b",
+            "9ee455e4770d",
+            "0402a003dae9",
+            "78569a801a38",
+            "b84960841a75",
+            "1955d568d987",
+            "599ca4ed791b",
+            "971207c6a525",
+            "def21f50dd3c",
+            "8fb18e36697d",
+            "51b23d177971",
+            "c7b1283bb7eb",
+            "2654a87be968",
+            "af91d9a50547",
+            "a4e48102f402",
+        ]
+
+        seq_len: int = 24 * 60 * 4
+        """系列長の長さ"""
+        features: list[str] = ["anglez", "enmo", "hour_sin", "hour_cos"]
+
+        batch_size: int = 32
+
+        upsample_rate: float = 1.0
+        """default: 1.0"""
+        downsample_rate: int = 2
+        """default: 2"""
+
+        bg_sampling_rate: float = 0.5
+        """negative labelのサンプリング率. default: 0.5"""
+        offset: int = 10
+        """gaussian labelのoffset. default: 10"""
+        sigma: int = 10
+        """gaussian labelのsigma. default: 10"""
+        sample_per_epoch: int | None = None
+
+    cfg = Config()
+    data_dir = Path(cfg.data_dir)
+    processed_dir = Path(cfg.processed_dir)
+    event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
+    valid_event_df = event_df.filter(pl.col("series_id").is_in(cfg.valid_series))
+    with my_utils.trace("load_chunk_features"):
+        valid_chunk_features = load_chunk_features(
+            seq_len=cfg.seq_len,
+            feature_names=cfg.features,
+            series_ids=cfg.valid_series,
+            processed_dir=processed_dir,
+            phase="valid",
+        )
+
+
 if __name__ == "__main__":
     # test_ds()
     # test_ds2()
     # test_ds3()
     # test_build_dl()
     # test_build_dl_v2()
-    test_build_dl_v3()
+    # test_build_dl_v3()
+    test_build_dl_v4()
+    # _test_load_chunk_features()

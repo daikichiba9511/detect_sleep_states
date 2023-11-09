@@ -1,15 +1,21 @@
+import math
+import json
 import os
+import pathlib
 import random
+import subprocess
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import wraps
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
-from typing import Any, ClassVar
-import subprocess
+from typing import Any, ClassVar, Sequence
 
 import numpy as np
+import polars as pl
+import psutil
 import torch
+from scipy import signal
 
 logger = getLogger(__name__)
 
@@ -87,6 +93,91 @@ def get_commit_head_hash() -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], stdout=subprocess.PIPE, check=True
     ).stdout.decode("utf-8")[:-1]
+
+
+@contextmanager
+def trace(title: str):
+    t0 = time.time()
+    p = psutil.Process(os.getpid())
+    m0 = p.memory_info().rss / 2.0**30
+    yield
+    m1 = p.memory_info().rss / 2.0**30
+    delta_mem = m1 - m0
+    sign = "+" if delta_mem >= 0 else "-"
+    delta_mem = math.fabs(delta_mem)
+    print(f"{title}: {m1:.2f}GB({sign}{delta_mem:.2f}GB):{time.time() - t0:.3f}s")
+
+
+def pad_if_needed(x: np.ndarray, max_len: int, pad_value: float = 0.0) -> np.ndarray:
+    if len(x) == max_len:
+        return x
+
+    num_pad = max_len - len(x)
+    n_dim = len(x.shape)
+    pad_widths = [(0, num_pad)] + [(0, 0) for _ in range(n_dim - 1)]
+    return np.pad(x, pad_width=pad_widths, mode="constant", constant_values=pad_value)  # type: ignore
+
+
+def load_series(path: pathlib.Path, key: str, fold: int) -> list[str]:
+    if not path.exists():
+        return []
+
+    with path.open("r") as f:
+        series = json.load(f)
+    fold_series = series[fold]
+    assert fold == fold_series["fold"]
+    return fold_series[key]
+
+
+def post_process_for_seg(
+    keys: Sequence[str],
+    preds: np.ndarray,
+    score_thr: float = 0.01,
+    distance: int = 5000,
+) -> pl.DataFrame:
+    """
+    Args:
+        keys: series_id + "_" + event_name
+        preds: (n, duration, 2) array. 0: onset, 1: wakeup
+    """
+    if preds.shape[-1] != 2:
+        raise ValueError(f"Invalid shape: {preds.shape}. check your infer.")
+
+    series_ids = np.array([key.split("_")[0] for key in keys])
+    unique_series_ids = np.unique(series_ids)
+
+    records = []
+    for series_id in unique_series_ids:
+        series_idx = np.where(series_ids == series_id)[0]
+        this_series_preds = preds[series_idx].reshape(-1, 2)
+
+        for i, event_name in enumerate(["onset", "wakeup"]):
+            this_event_preds = this_series_preds[:, i]
+            steps = signal.find_peaks(
+                this_event_preds, height=score_thr, distance=distance
+            )[0]
+            scores = this_event_preds[steps]
+            for step, score in zip(steps, scores):
+                records.append(
+                    {
+                        "series_id": series_id,
+                        "event": event_name,
+                        "step": step,
+                        "score": score,
+                    }
+                )
+
+    if not records:
+        records.append(
+            {"series_id": 0, "event": "onset", "step": 0, "score": 0.0},
+        )
+
+    sub_df = pl.DataFrame(records).sort(by=["series_id", "step"])
+    row_ids = pl.Series(name="row_id", values=np.arange(len(sub_df)))
+    sub_df = sub_df.with_columns(row_ids).select(
+        ["row_id", "series_id", "event", "step", "score"]
+    )
+    return sub_df
 
 
 if __name__ == "__main__":

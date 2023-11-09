@@ -9,7 +9,8 @@ from src import utils
 
 
 class Config:
-    n_splits: int = 10
+    n_splits: int = 5
+    # n_splits: int = 10
     seed: int = 42
 
     root_dir: Path = Path(__file__).resolve().parents[1]
@@ -39,6 +40,9 @@ def make_fold(cfg, n_splits=5) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    import numpy as np
+    import json
+
     print("root: ", Config.root_dir)
     print("seed: ", Config.seed)
     utils.seed_everything(Config.seed)
@@ -47,3 +51,18 @@ if __name__ == "__main__":
     print(df.groupby("fold").size())
     print(df.groupby("fold")["series_id"].nunique())
     df.to_parquet(Config.output_dir / Config.save_fname, index=False)
+
+    folded_serieses = []
+    for fold in range(Config.n_splits):
+        train_series = list(set(df[df["fold"] != fold]["series_id"].to_list()))
+        valid_series = list(set(df[df["fold"] == fold]["series_id"].to_list()))
+        print(f"fold: {fold}")
+        folded_serieses.append(
+            {"fold": fold, "train_series": train_series, "valid_series": valid_series}
+        )
+
+    with (
+        Config.output_dir
+        / f"folded_series_ids_fold{Config.n_splits}_seed{Config.seed}.json"
+    ).open("w") as fp:
+        json.dump(folded_serieses, fp, indent=4)

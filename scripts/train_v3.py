@@ -3,24 +3,27 @@ import pprint
 import time
 import warnings
 from functools import partial
-import numpy as np
-
 from logging import INFO
+
+import numpy as np
 import torch
 import torch.nn as nn
+import torchvision.transforms.functional as TF
 from torch.cuda.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
+from torch.nn.utils import clip_grad
 from tqdm.auto import tqdm
 
-from src.dataset import mean_std_normalize_label
-from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold, mixup
+from src import metrics, utils
 from src import models as my_models
+from src.dataset import mean_std_normalize_label
+from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold
 from src.utils import (
     LoggingUtils,
     get_class_vars,
-    seed_everything,
     get_commit_head_hash,
+    seed_everything,
 )
 
 warnings.filterwarnings("ignore")
@@ -33,7 +36,7 @@ torch.backends.cudnn.allow_tf32 = True  # type: ignore
 LOGGER = LoggingUtils.get_stream_logger(INFO)
 
 
-def train_one_epoch_v3(
+def train_one_epoch_v4(
     epoch: int,
     model: nn.Module,
     dl_train: DataLoader,
@@ -46,6 +49,7 @@ def train_one_epoch_v3(
     seed: int = 42,
     num_grad_accum: int = 1,
     # -- additional params
+    mixup_prob: float = 0.0,
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).train()
@@ -57,30 +61,31 @@ def train_one_epoch_v3(
         enumerate(dl_train), total=len(dl_train), dynamic_ncols=True, leave=True
     )
     for batch_idx, batch in pbar:
-        with autocast(enabled=use_amp, dtype=torch.bfloat16):
-            X = batch[0].to(device, non_blocking=True)
-            y = batch[1].to(device, non_blocking=True)
+        with autocast(enabled=use_amp, dtype=torch.float16):
+            X = batch["feature"].to(device, non_blocking=True)
+            y = batch["label"].to(device, non_blocking=True)
 
-            mixed = False
-            if np.random.rand() < 0.5:
-                X, y, y_mix, lam = mixup(X, y)
-                mixed = True
-            else:
-                y_mix, lam = None, None
+            # mixed = False
+            # if np.random.rand() < 0.5:
+            #     X, y, y_mix, lam = mixup(X, y)
+            #     mixed = True
+            # else:
+            #     y_mix, lam = None, None
 
-            # pred, _ = model(X, None)  # MultiResidualBiGRU exp007
-            pred = model(X, training=True)  # SleepTransformer
-            normalized_pred = mean_std_normalize_label(pred)
+            do_mixup = np.random.rand() < mixup_prob
+            out = model(X, y, do_mixup=do_mixup)  # Spectrogram2DCNN
+            loss = out["loss"]
 
-            loss = criterion(normalized_pred, y)
-            if mixed and y_mix is not None and lam is not None:
-                loss_mixed = criterion(normalized_pred, y_mix)
-                loss *= lam
-                loss += loss_mixed * (1 - lam)
+            # logits = out["logits"]
+            # if mixed and y_mix is not None and lam is not None:
+            #     loss_mixed = criterion(logits, y_mix)
+            #     loss *= lam
+            #     loss += loss_mixed * (1 - lam)
 
             scaler.scale(loss).backward()  # type: ignore
 
             if (batch_idx + 1) % num_grad_accum == 0:
+                clip_grad.clip_grad_norm_(model.parameters(), 1.0)
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
@@ -96,7 +101,7 @@ def train_one_epoch_v3(
     return result
 
 
-def valid_one_epoch_v3(
+def valid_one_epoch_v4(
     epoch: int,
     model: nn.Module,
     dl_valid: DataLoader,
@@ -115,60 +120,55 @@ def valid_one_epoch_v3(
     wakeup_pos_only_losses = AverageMeter("wakeup_pos_only_loss")
     start_time = time.time()
 
-    def _infer_for_transformer(model: nn.Module, X: torch.Tensor) -> torch.Tensor:
-        chunk_size = 7200
-        # (BS, seq_len, n_features)
-        X = X.to(device, non_blocking=True)
-        _, seq_len, n_features = X.shape
-        X = X.squeeze(0)
-
-        # print(f"1 {X.shape=}")
-        if X.shape[0] % chunk_size != 0:
-            X = torch.concat(
-                [
-                    X,
-                    torch.zeros(
-                        (chunk_size - len(X) % chunk_size, n_features),
-                        device=X.device,
-                    ),
-                ],
-            )
-
-        # print(f"2 {X.shape=}")
-        X_chunk = X.view(X.shape[0] // chunk_size, chunk_size, n_features)
-        # print(f"3 {X.shape=}")
-        # (BS, seq_len, 2)
-        pred = model(X_chunk, training=False)
-        pred = pred.reshape(-1, 2)[:seq_len].unsqueeze(0)
-        return pred
-
     pbar = tqdm(
         enumerate(dl_valid), total=len(dl_valid), dynamic_ncols=True, leave=True
     )
+    # valid_output = []
     for _, batch in pbar:
-        with torch.no_grad(), autocast(enabled=use_amp, dtype=torch.bfloat16):
-            # (BS, seq_len, n_features)
-            X = batch[0].to(device, non_blocking=True)
-            # (BS, seq_len, 2)
-            y = batch[1].to(device, non_blocking=True)
+        with torch.no_grad(), autocast(enabled=use_amp, dtype=torch.float16):
+            # (BS, n_features, seq_len)
+            X = batch["feature"].to(device, non_blocking=True)
+            # (BS, seq_len, 3)
+            y = batch["label"].to(device, non_blocking=True)
+            out = model(X, y)  # Spectrogram2DCNN
+            # logits = out["logits"]
+            loss = out["loss"]
+            losses.update(loss.item())
 
-            if isinstance(model, my_models.SleepTransformer):
-                pred = _infer_for_transformer(model, X)
-            else:
-                pred, _ = model(X, None)  # MultiResidualBiGRU exp007
-
-            normalized_pred = mean_std_normalize_label(pred)
-            loss = criterion(normalized_pred, y)
-
-            loss_onset = criterion(normalized_pred[..., 0], y[..., 0]).detach().cpu()
+            logits = out["logits"].detach()
+            y_onset = y[:, :, 1]
+            y_onset_pos_indices = y_onset > 0
+            loss_onset = criterion(
+                logits[y_onset_pos_indices][:, 1], y_onset[y_onset_pos_indices]
+            )
             if not torch.isnan(loss_onset):
                 onset_losses.update(loss_onset.item())
 
-            loss_wakeup = criterion(normalized_pred[..., 1], y[..., 1]).detach().cpu()
+            y_wakeup = y[:, :, 2]
+            y_wakeup_pos_indices = y_wakeup > 0
+            loss_wakeup = criterion(
+                logits[y_wakeup_pos_indices][:, 2], y_wakeup[y_wakeup_pos_indices]
+            )
             if not torch.isnan(loss_wakeup):
                 wakeup_losses.update(loss_wakeup.item())
 
-            losses.update(loss.item())
+            # resized_logits = TF.resize(
+            #     logits.sigmoid().detach().cpu(),
+            #     size=[duration, logits.shape[2]],
+            #     antialias=False,
+            # )
+            # resized_y = TF.resize(
+            #     y.detach().cpu(),
+            #     size=[duration, logits.shape[2]],
+            #     antialias=False,
+            # )
+            # valid_output.append(
+            #     (
+            #         resized_logits,
+            #         resized_y,
+            #         loss.detach().item(),
+            #     )
+            # )
             pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
     result = {
@@ -186,22 +186,29 @@ def valid_one_epoch_v3(
 def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> None:
     cfg = importlib.import_module(f"src.configs.{config}").Config
     cfg.model_save_path = cfg.output_dir / (cfg.model_save_name + f"{fold}.pth")
+    if debug:
+        cfg.train_series = cfg.train_series[:5]
+        cfg.sample_per_epoch = None
+
     log_fp = cfg.output_dir / f"{config}_fold{fold}.log"
     LoggingUtils.add_file_handler(LOGGER, log_fp)
     commit_hash = get_commit_head_hash()
 
     cfg_map = get_class_vars(cfg)
-    LOGGER.info(f"fold: {fold}, debug: {debug}, commit_hash: {commit_hash}")
+    LOGGER.info(
+        f"running train_v3.py => fold: {fold}, debug: {debug}, commit_hash: {commit_hash}"
+    )
     LOGGER.info(f"Fold: {fold}\n {pprint.pformat(cfg_map)}")
     train_one_fold(
         cfg,
         fold,
         debug,
         partial(
-            train_one_epoch_v3,
+            train_one_epoch_v4,
             num_grad_accum=cfg.num_grad_accum,
+            mixup_prob=cfg.mixup_prob,
         ),
-        partial(valid_one_epoch_v3),
+        partial(valid_one_epoch_v4),
         model_compile=model_compile,
         # compile_mode="max-autotune",
         compile_mode="default",

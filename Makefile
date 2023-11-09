@@ -62,7 +62,14 @@ train: ## train model
 .PHONY: train2
 train2: ## train model by train_v2.py
 	@PYTHONPATH=${PYTHONPATH} rye run python scripts/train_v2.py \
-		--config $(CONFIG)
+		--config $(CONFIG) \
+		--model_compile
+
+.PHONY: train2
+train3: ## train model by train_v3.py
+	@PYTHONPATH=${PYTHONPATH} rye run python scripts/train_v3.py \
+		--config $(CONFIG) \
+		--model_compile
 
 .PHONY: train-all
 train-all: ## train model with 5-fold
@@ -78,6 +85,7 @@ train2-all: ## train model 2 with 5-fold
 		PYTHONPATH=${PYTHONPATH} rye run python scripts/train_v2.py \
 			--config $(CONFIG) \
 			--fold $$i; \
+			--model_compile \
 	done
 
 .PHONY: train-debug
