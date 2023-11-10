@@ -20,3 +20,13 @@
 
 # 021+seq_len=24*60*4
 # make train3 CONFIG=exp029 # 0/10folds 0.7920901528576572
+
+# 5folds
+# seq_len=24*60*4(030), 24*60*6(031), 24*60*8(032)
+# make train3 CONFIG=exp030 # 0/5folds 0.692147264363885
+# make train3 CONFIG=exp031 # 0/5folds 0.6940936007257762
+# make train3 CONFIG=exp032 # 0/5folds 0.7091765153636308
+
+# mixup turn of(032), turn off(033)
+# make train3 CONFIG=exp032 # 0/5folds 0.7091765153636308
+# make train3 CONFIG=exp033 # 0/5folds
