@@ -2,14 +2,15 @@ from pathlib import Path
 import pathlib
 from typing import Any
 
+
 from src import utils
 
 
 class Config:
-    name: str = "exp022"
+    name: str = "exp029"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    21+use_sample_weights
+    21+seq_len=24*60*4
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -78,7 +79,7 @@ class Config:
     mixup_prob: float = 0.5
     downsample_rate: int = 2
     upsample_rate: int = 1
-    seq_len: int = 24 * 60 * 6
+    seq_len: int = 24 * 60 * 4
 
     fold: int = 0
     train_series: list[str] = utils.load_series(

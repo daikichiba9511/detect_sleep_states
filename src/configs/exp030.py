@@ -2,14 +2,15 @@ from pathlib import Path
 import pathlib
 from typing import Any
 
+
 from src import utils
 
 
 class Config:
-    name: str = "exp022"
+    name: str = "exp030"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    21+use_sample_weights
+    29+5-fold
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -78,16 +79,16 @@ class Config:
     mixup_prob: float = 0.5
     downsample_rate: int = 2
     upsample_rate: int = 1
-    seq_len: int = 24 * 60 * 6
+    seq_len: int = 24 * 60 * 4
 
     fold: int = 0
     train_series: list[str] = utils.load_series(
-        pathlib.Path("./input/for_train/folded_series_ids_fold10.json"),
+        pathlib.Path("./input/for_train/folded_series_ids_fold5_seed42.json"),
         "train_series",
         fold,
     )
     valid_series: list[str] = utils.load_series(
-        pathlib.Path("./input/for_train/folded_series_ids_fold10.json"),
+        pathlib.Path("./input/for_train/folded_series_ids_fold5_seed42.json"),
         "valid_series",
         fold,
     )
