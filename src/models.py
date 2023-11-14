@@ -2,6 +2,9 @@ from typing import Protocol, Any, Callable
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.transforms.functional as TF
+import torchaudio.transforms as TAT
 import segmentation_models_pytorch as smp
 
 
@@ -485,6 +488,52 @@ def weighted_loss(loss: torch.Tensor, sample_weights: torch.Tensor) -> torch.Ten
     return (loss.mean(1) * sample_weights).mean()
 
 
+class MelConvBlock(nn.Module):
+    def __init__(self, in_chans: int, out_chans: int) -> None:
+        super().__init__()
+        self.in_chans = in_chans
+        self.out_chans = out_chans
+
+        self.conv1 = nn.Conv2d(
+            in_channels=in_chans,  # type: ignore
+            out_channels=out_chans,  # type: ignore
+            kernel_size=(3, 3),
+            stride=(1, 1),
+            padding=(1, 1),
+            bias=False,
+        )
+        self.conv2 = nn.Conv2d(
+            in_channels=out_chans,  # type: ignore
+            out_channels=out_chans,  # type: ignore
+            kernel_size=(3, 3),
+            stride=(1, 1),
+            padding=(1, 1),
+            bias=False,
+        )
+        self.bn1 = nn.BatchNorm2d(out_chans)
+        self.bn2 = nn.BatchNorm2d(out_chans)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = F.relu_(self.bn1(self.conv1(x)))
+        x = F.relu_(self.bn2(self.conv2(x)))
+        x = F.avg_pool2d(x, kernel_size=(2, 2))
+        return x
+
+
+class AuxHead(nn.Module):
+    def __init__(self, in_feats: int, out_feats: int) -> None:
+        super().__init__()
+        self.fc1 = nn.Linear(in_feats, out_feats)
+        self.loss_fn = nn.BCEWithLogitsLoss()
+
+    def forward(self, x: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+        # (batch_size, pred_len, n_classes) -> (batch_size, n_classes, pred_len)
+        x = x.permute(0, 2, 1)
+        x = self.fc1(x)
+        loss = self.loss_fn(x, label)
+        return loss
+
+
 class Spectrogram2DCNN(nn.Module):
     def __init__(
         self,
@@ -494,6 +543,7 @@ class Spectrogram2DCNN(nn.Module):
         in_channels: int,
         encoder_weights: str | None = None,
         use_sample_weights: bool = False,
+        use_aux_head: bool = False,
         spec_augment: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> None:
         super().__init__()
@@ -510,47 +560,83 @@ class Spectrogram2DCNN(nn.Module):
             reduction="none" if use_sample_weights else "mean"
         )
         self.spec_augment = spec_augment
+        self.use_aux_head = use_aux_head
+        if self.use_aux_head:
+            self.aux_head = AuxHead(in_feats=5760, out_feats=1)
+
+        # self.mel_spectrogram = nn.Sequential(
+        #     # forward: (..., times) -> (n_channels, n_mels, times)
+        #     TAT.MelSpectrogram(
+        #         sample_rate=16000,
+        #         n_fft=400,  # size of fft,creates n_fft//2+1 bins
+        #         n_mels=64,  # number of mel filterbanks
+        #         win_length=100,  # defaults None is equal to n_fft
+        #         hop_length=None,  # defaults None is equal to win_length//2
+        #     ),
+        # )
+        # self.mel_conv = MelConvBlock(
+        #     in_chans=feature_extractor.in_channels,  # type: ignore
+        #     out_chans=feature_extractor.out_chans,  # type: ignore
+        # )
+        # self.mel_fc = nn.Linear(
+        #     in_features=116,  # type: ignore mel_bins
+        #     out_features=2880,  # type: ignore seq_len//downsample_rate
+        # )
 
     def forward(
         self,
         x: torch.Tensor,
         labels: torch.Tensor | None = None,
         do_mixup: bool = False,
+        do_mixup_raw_signal: bool = False,
     ) -> dict[str, torch.Tensor]:
-        x = self.feature_extractor(x)  # (batch_size, n_channels, height, n_classes)
-
-        if do_mixup and labels is not None:
+        if do_mixup_raw_signal and labels is not None:
             x, labels, mixed_labels, lam = augmentations.mixup(x, labels)
+        x1 = self.feature_extractor(x)  # (bs,nc,height,seq_len//downsample_rate)
+        # print("wavegram", x1.shape)
+
+        # (bs,n_feats,seq_len) -> (bs,feature_extractor.out_chans,n_mels,mel_bins)
+        # x = self.mel_spectrogram(x)
+        # print("mel_spectrogram", x.shape, "mel_spectrogram", x.shape)
+        # if self.spec_augment is not None:
+        #     x = self.spec_augment(x)
+        #
+        if do_mixup and labels is not None and not do_mixup_raw_signal:
+            # x, labels, mixed_labels, lam = augmentations.mixup(x, labels)
+            x1, labels, mixed_labels, lam = augmentations.mixup(x1, labels)
         else:
             mixed_labels, lam = None, None
+        #
+        # print("mel_conv before", x.shape)
+        # x = self.mel_conv(x)
+        # print(f"mel_spectrogram.shape: {x.shape}, wavegram.shape: {x1.shape}")
+        x1 = self.encoder(x1).squeeze(1)  # (batch_size, height, seq_len)
 
-        if self.spec_augment is not None:
-            x = self.spec_augment(x)
-
-        x = self.encoder(x).squeeze(1)  # (batch_size, height, seq_len)
-        logits = self.decoder(x)  # (batch_size, n_classes, n_timesteps)
+        logits = self.decoder(x1)  # (batch_size, n_classes, n_timesteps)
         output = {"logits": logits}
         if labels is not None:
             # (batch_size, pred_len, n_classes)
             loss = self.loss_fn(logits, labels)
 
-            # if self.use_sample_weights:
-            #     # label \in [0.0, 1.0]
-            #     # make sample_weights for each class
-            #     sample_weights = made_sample_weights(labels)
-            #     loss = weighted_loss(loss, sample_weights)
+            if self.use_aux_head:
+                aux_labels = torch.max(labels, dim=1)[0].unsqueeze(-1)
+                aux_loss = self.aux_head(logits, aux_labels)
+                loss = loss + aux_loss
+
+            if self.use_sample_weights:
+                # label \in [0.0, 1.0]
+                # make sample_weights for each class
+                sample_weights = made_sample_weights(labels)
+                loss = weighted_loss(loss, sample_weights)
             #
-            # if (
-            #     self.use_sample_weights
-            #     and do_mixup
-            #     and mixed_labels is not None
-            #     and lam is not None
-            # ):
-            #     sample_weights = made_sample_weights(mixed_labels)
-            #     mixed_loss = self.loss_fn(logits, mixed_labels)
-            #     mixed_loss = weighted_loss(mixed_loss, sample_weights)
-            #
-            #     loss = lam * loss + (1 - lam) * mixed_loss
+            if do_mixup and mixed_labels is not None and lam is not None:
+                mixed_loss = self.loss_fn(logits, mixed_labels)
+                if self.use_sample_weights:
+                    sample_weights = made_sample_weights(mixed_labels)
+                    mixed_loss = weighted_loss(mixed_loss, sample_weights)
+
+                loss = lam * loss + (1 - lam) * mixed_loss
+                # loss = mixed_loss
 
             output["loss"] = loss
         return output
@@ -661,6 +747,7 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             encoder_weights=params["encoder_weights"],
             use_sample_weights=params["use_sample_weights"],
             spec_augment=spec_augment,
+            use_aux_head=params.get("use_aux_head", False),
         )
         return model
 
@@ -797,7 +884,9 @@ def _test_run_model5():
         scale_factor=2,
         dropout=0.2,
         # -- Spectrogram2DCNN
-        encoder_name="resnet18",
+        # encoder_name="resnet18",
+        # encoder_name="timm-maxvit_tiny_tf_224.in1k",  # これ動かすにはカスタム必要
+        encoder_name="mit_b0",
         encoder_weights="imagenet",
     )
     feature_extractor = feature_extractors.CNNSpectgram(
@@ -824,12 +913,10 @@ def _test_run_model5():
         encoder_name=params["encoder_name"],
         in_channels=feature_extractor.out_chans,
         encoder_weights=params["encoder_weights"],
-        use_sample_weights=True,
+        use_sample_weights=False,
+        use_aux_head=True,
     )
     model = model.to(device).train()
-
-    num_features = 4
-    bs = 8 * 2
 
     import pathlib
     from pathlib import Path

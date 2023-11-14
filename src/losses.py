@@ -2,6 +2,8 @@ from functools import partial
 from typing import Callable
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 def bce_with_postive_only(logits, targets):
@@ -56,6 +58,31 @@ def bce_with_weighted_postive(
     return loss
 
 
+class FocalLoss(nn.Module):
+    """
+    References:
+    [1]
+    https://github.com/ashawkey/FocalLoss.pytorch/blob/master/Explaination.md
+    """
+
+    def __init__(self, gamma: int = 2, weight: torch.Tensor | None = None) -> None:
+        super().__init__()
+        self.gamma = gamma
+        self.weight = weight
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            input: (N, C), where C = number of classes
+            target: (N,), where each value is 0 <= targets[i] <= C-1
+        """
+        log_pt = F.log_softmax(input, dim=1)
+        pt = torch.exp(log_pt)
+        log_pt = (1 - pt) ** self.gamma * log_pt
+        loss = F.nll_loss(log_pt, target, weight=self.weight)
+        return loss
+
+
 def build_criterion(criterion_type: str) -> Callable:
     if criterion_type == "BCEWithLogitsLoss":
         return torch.nn.BCEWithLogitsLoss()
@@ -63,5 +90,7 @@ def build_criterion(criterion_type: str) -> Callable:
         return partial(bce_with_weighted_postive, weights=(0.8, 0.8, 0.2))
     elif criterion_type == "MSELoss":
         return torch.nn.MSELoss()
+    elif criterion_type == "FocalLoss":
+        return FocalLoss()
     else:
         raise NotImplementedError

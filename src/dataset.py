@@ -1359,7 +1359,6 @@ class DataloaderConfigV4(Protocol):
     """gaussian labelのoffset. default: 10"""
     sigma: int
     """gaussian labelのsigma. default: 10"""
-    num_features: list[str]
 
 
 def _init_test_dl(

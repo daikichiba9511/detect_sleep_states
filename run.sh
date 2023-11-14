@@ -29,4 +29,29 @@
 
 # mixup turn of(032), turn off(033)
 # make train3 CONFIG=exp032 # 0/5folds 0.7091765153636308
-# make train3 CONFIG=exp033 # 0/5folds
+# make train3 CONFIG=exp033 # 0/5folds 0.7425812436177731
+
+# base => exp033; +encoder_name=mit_b0(034,bs=8*4), mit_b3(035,bs=8*1)
+# make train3 CONFIG=exp034 # 0/5folds 0.7652777987441026
+# make train3 CONFIG=exp035 # 0/5folds 0.78415255226564
+
+# 35+FocalLoss
+# make train3 CONFIG=exp036 # 0/5folds
+
+# compare base_filters 64(037_1), 64*2(038), 64*3(039)
+# make train3 CONFIG=exp037_1 # 0/5folds
+# make train3 CONFIG=exp038   # 0/5folds 0.7592679604904783
+# make train3 CONFIG=exp039   # 0/5folds 0.76563664886476
+
+# compare mixup on raw signal, base 37_1
+# make train3 CONFIG=exp040 # 0/5folds
+
+# bg_sampling_rate=0.5(041), 0.4(043), 0.3(044), 0.2(045)
+# make train3 CONFIG=exp043 # 0/5folds
+# make train3 CONFIG=exp044 # 0/5folds
+# make train3 CONFIG=exp045 # 0/5folds
+
+# 41+seq_len=24*60*10(046), 32*16*30(047), 24*60*20(048)
+make train3 CONFIG=exp046 # 0/5folds
+make train3 CONFIG=exp047 # 0/5folds
+make train3 CONFIG=exp048 # 0/5folds

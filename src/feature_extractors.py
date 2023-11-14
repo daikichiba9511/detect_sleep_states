@@ -27,6 +27,7 @@ class CNNSpectgram(nn.Module):
     ) -> None:
         super().__init__()
 
+        self.in_channels = in_channels
         self.out_chans = len(kernel_size)
         self.out_size = output_size
         self.sigmoid = sigmoid

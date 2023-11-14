@@ -7,10 +7,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp033"
+    name: str = "exp040"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    032+mixup_prob=0.0
+    037_1+mixup raw signal+mixed_loss+loss
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -29,15 +29,15 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 4
-    batch_size: int = 8 * 4
+    batch_size: int = 8 * 1
     num_workers: int = 8 * 1
-    num_grad_accum: int = 1
+    num_grad_accum: int = 4
 
     # Model
     model_type: str = "Spectrogram2DCNN"
 
+    # criterion_type: str = "FocalLoss"
     criterion_type: str = "BCEWithLogitsLoss"
-    # criterion_type: str = "BCEWithLogitsLossWeightedPos"
     optimizer_params: dict[str, Any] = dict(lr=5e-4, weight_decay=1e-2, eps=1e-4)
     scheduler_params: dict[str, Any] = dict(
         t_initial=num_epochs,
@@ -77,6 +77,7 @@ class Config:
 
     # Train additional params
     mixup_prob: float = 0.0
+    mixup_raw_signal_prob: float = 0.5
     downsample_rate: int = 2
     upsample_rate: int = 1
     seq_len: int = 24 * 60 * 8
@@ -121,9 +122,12 @@ class Config:
         scale_factor=2,
         dropout=0.2,
         # -- Spectrogram2DCNN
-        encoder_name="resnet34",
+        encoder_name="mit_b0",
         encoder_weights="imagenet",
         use_sample_weights=False,
-        use_spec_augment=False,
-        spec_augment_params=None,
+        use_spec_augment=True,
+        spec_augment_params=dict(
+            time_mask_param=100,
+            freq_mask_param=10,
+        ),
     )

@@ -7,10 +7,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp033"
+    name: str = "exp034"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    032+mixup_prob=0.0
+    033+encoder_name=mit_b0
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -121,7 +121,7 @@ class Config:
         scale_factor=2,
         dropout=0.2,
         # -- Spectrogram2DCNN
-        encoder_name="resnet34",
+        encoder_name="mit_b0",
         encoder_weights="imagenet",
         use_sample_weights=False,
         use_spec_augment=False,

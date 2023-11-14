@@ -49,6 +49,7 @@ def train_one_epoch_v4(
     seed: int = 42,
     num_grad_accum: int = 1,
     # -- additional params
+    mixup_raw_signal_prob: float = 0.0,
     mixup_prob: float = 0.0,
 ) -> dict[str, float | int]:
     seed_everything(seed)
@@ -73,7 +74,10 @@ def train_one_epoch_v4(
             #     y_mix, lam = None, None
 
             do_mixup = np.random.rand() < mixup_prob
-            out = model(X, y, do_mixup=do_mixup)  # Spectrogram2DCNN
+            do_mixup_raw_signal = np.random.rand() < mixup_raw_signal_prob
+            out = model(
+                X, y, do_mixup=do_mixup, do_mixup_raw_signal=do_mixup_raw_signal
+            )  # Spectrogram2DCNN
             loss = out["loss"]
 
             # logits = out["logits"]
@@ -82,9 +86,12 @@ def train_one_epoch_v4(
             #     loss *= lam
             #     loss += loss_mixed * (1 - lam)
 
-            scaler.scale(loss).backward()  # type: ignore
+            if not torch.isnan(loss) or not torch.isinf(loss):
+                scaler.scale(loss).backward()  # type: ignore
 
-            if (batch_idx + 1) % num_grad_accum == 0:
+            if (batch_idx + 1) % num_grad_accum == 0 and not (
+                torch.isnan(loss) or torch.isinf(loss)
+            ):
                 clip_grad.clip_grad_norm_(model.parameters(), 1.0)
                 scaler.step(optimizer)
                 scaler.update()
@@ -118,6 +125,7 @@ def valid_one_epoch_v4(
     wakeup_losses = AverageMeter("wakeup_loss")
     onset_pos_only_losses = AverageMeter("onset_pos_only_loss")
     wakeup_pos_only_losses = AverageMeter("wakeup_pos_only_loss")
+    bce = nn.BCEWithLogitsLoss()
     start_time = time.time()
 
     pbar = tqdm(
@@ -133,20 +141,25 @@ def valid_one_epoch_v4(
             out = model(X, y)  # Spectrogram2DCNN
             # logits = out["logits"]
             loss = out["loss"]
-            losses.update(loss.item())
+            if not (torch.isnan(loss) or torch.isinf(loss)):
+                losses.update(loss.item())
+                pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
             logits = out["logits"].detach()
+
+            # Loss_onset
             y_onset = y[:, :, 1]
             y_onset_pos_indices = y_onset > 0
-            loss_onset = criterion(
+            loss_onset = bce(
                 logits[y_onset_pos_indices][:, 1], y_onset[y_onset_pos_indices]
             )
             if not torch.isnan(loss_onset):
                 onset_losses.update(loss_onset.item())
 
+            # Loss_wakeup
             y_wakeup = y[:, :, 2]
             y_wakeup_pos_indices = y_wakeup > 0
-            loss_wakeup = criterion(
+            loss_wakeup = bce(
                 logits[y_wakeup_pos_indices][:, 2], y_wakeup[y_wakeup_pos_indices]
             )
             if not torch.isnan(loss_wakeup):
@@ -169,7 +182,6 @@ def valid_one_epoch_v4(
             #         loss.detach().item(),
             #     )
             # )
-            pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
     result = {
         "epoch": epoch,
@@ -207,6 +219,7 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
             train_one_epoch_v4,
             num_grad_accum=cfg.num_grad_accum,
             mixup_prob=cfg.mixup_prob,
+            mixup_raw_signal_prob=getattr(cfg, "mixup_raw_signal_prob", 0.0),
         ),
         partial(valid_one_epoch_v4),
         model_compile=model_compile,

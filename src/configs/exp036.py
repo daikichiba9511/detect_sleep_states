@@ -7,10 +7,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp033"
+    name: str = "exp036"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    032+mixup_prob=0.0
+    035+FocalLoss
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -29,15 +29,14 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 4
-    batch_size: int = 8 * 4
+    batch_size: int = 8 * 1
     num_workers: int = 8 * 1
-    num_grad_accum: int = 1
+    num_grad_accum: int = 4
 
     # Model
     model_type: str = "Spectrogram2DCNN"
 
-    criterion_type: str = "BCEWithLogitsLoss"
-    # criterion_type: str = "BCEWithLogitsLossWeightedPos"
+    criterion_type: str = "FocalLoss"
     optimizer_params: dict[str, Any] = dict(lr=5e-4, weight_decay=1e-2, eps=1e-4)
     scheduler_params: dict[str, Any] = dict(
         t_initial=num_epochs,
@@ -121,7 +120,7 @@ class Config:
         scale_factor=2,
         dropout=0.2,
         # -- Spectrogram2DCNN
-        encoder_name="resnet34",
+        encoder_name="mit_b3",
         encoder_weights="imagenet",
         use_sample_weights=False,
         use_spec_augment=False,
