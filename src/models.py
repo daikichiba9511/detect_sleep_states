@@ -8,7 +8,7 @@ import torchaudio.transforms as TAT
 import segmentation_models_pytorch as smp
 
 
-from src import decoders, feature_extractors, augmentations
+from src import decoders, feature_extractors, augmentations, encoders
 
 
 class ResidualBiGRU(nn.Module):
@@ -544,16 +544,27 @@ class Spectrogram2DCNN(nn.Module):
         encoder_weights: str | None = None,
         use_sample_weights: bool = False,
         use_aux_head: bool = False,
+        use_custom_encoder: bool = True,
         spec_augment: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> None:
         super().__init__()
         self.feature_extractor = feature_extractor
-        self.encoder = smp.Unet(
-            encoder_name=encoder_name,
-            encoder_weights=encoder_weights,
-            in_channels=in_channels,
-            classes=1,
-        )
+        # exp020~049まで
+        if use_custom_encoder:
+            self.encoder = encoders.CustomUnet(
+                name=encoder_name,
+                pretrained=encoder_weights is not None,
+                decoder_channels=[258, 128, 64, 32, 16],
+                n_classes=1,
+                dropout=0.2,
+            )
+        else:
+            self.encoder = smp.Unet(
+                encoder_name=encoder_name,
+                encoder_weights=encoder_weights,
+                in_channels=in_channels,
+                classes=1,
+            )
         self.decoder = decoder
         self.use_sample_weights = use_sample_weights
         self.loss_fn = nn.BCEWithLogitsLoss(
@@ -864,20 +875,20 @@ def _test_run_model5():
     print("Test5")
     # device = torch.device("cuda")
     device = torch.device("cpu")
-    seq_len = 24 * 60 * 4
+    seq_len_ = 32 * 16 * 10
     downsample_rate = 2
     params: dict[str, Any] = dict(
         downsample_rate=downsample_rate,
         # -- CNNSpectgram
         in_channels=4,
-        base_filters=64,
+        base_filters=64 * 4,
         kernel_size=[32, 16, downsample_rate],
         stride=downsample_rate,
         sigmoid=True,
-        output_size=seq_len,
+        output_size=seq_len_,
         # -- Unet1DDecoder
         n_classes=3,
-        duration=seq_len,
+        duration=seq_len_,
         bilinear=False,
         se=False,
         res=False,
@@ -885,9 +896,12 @@ def _test_run_model5():
         dropout=0.2,
         # -- Spectrogram2DCNN
         # encoder_name="resnet18",
-        # encoder_name="timm-maxvit_tiny_tf_224.in1k",  # これ動かすにはカスタム必要
-        encoder_name="mit_b0",
+        # encoder_name="maxvit_tiny_rw_256",  # これ動かすにはカスタム必要
+        # encoder_name="maxvit_tiny_rw_256",  # これ動かすにはカスタム必要
+        encoder_name="maxvit_rmlp_nano_rw_256.sw_in1k",  # これ動かすにはカスタム必要
+        # encoder_name="mit_b0",
         encoder_weights="imagenet",
+        # encoder_weights=None,
     )
     feature_extractor = feature_extractors.CNNSpectgram(
         in_channels=params["in_channels"],
@@ -914,7 +928,7 @@ def _test_run_model5():
         in_channels=feature_extractor.out_chans,
         encoder_weights=params["encoder_weights"],
         use_sample_weights=False,
-        use_aux_head=True,
+        use_aux_head=False,
     )
     model = model.to(device).train()
 
@@ -924,7 +938,6 @@ def _test_run_model5():
 
     class Config:
         seed: int = 42
-        batch_size: int = 32
         num_workers: int = 0
         # Used in build_dataloader
         window_size: int = 10
@@ -989,7 +1002,8 @@ def _test_run_model5():
             "a4e48102f402",
         ]
 
-        seq_len: int = 24 * 60 * 4
+        # seq_len: int = 24 * 60 * 4
+        seq_len: int = seq_len_
         """系列長の長さ"""
         features: list[str] = ["anglez", "enmo", "hour_sin", "hour_cos"]
 
@@ -1012,6 +1026,7 @@ def _test_run_model5():
     batch = next(iter(dl))
     x = batch["feature"].to(device)
     y = batch["label"].to(device)
+    print(x.shape, y.shape)
 
     # x = torch.randn(bs, num_features, seq_len).to(device)
     # print(x.shape)

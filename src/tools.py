@@ -411,8 +411,9 @@ def train_one_fold(
             "lr",
             "valid/onset_loss",
             "valid/wakeup_loss",
-            "valid/onset_pos_only_loss",
-            "valid/wakeup_pos_only_loss",
+            "valid/sleep_loss",
+            # "valid/onset_pos_only_loss",
+            # "valid/wakeup_pos_only_loss",
         ]
     )
     for epoch in range(config.num_epochs):
@@ -447,8 +448,9 @@ def train_one_fold(
                 "valid/loss": valid_result["loss"],
                 "valid/onset_loss": valid_result["onset_loss"],
                 "valid/wakeup_loss": valid_result["wakeup_loss"],
-                "valid/onset_pos_only_loss": valid_result["onset_pos_only_loss"],
-                "valid/wakeup_pos_only_loss": valid_result["wakeup_pos_only_loss"],
+                "valid/sleep_loss": valid_result["sleep_loss"],
+                # "valid/onset_pos_only_loss": valid_result["onset_pos_only_loss"],
+                # "valid/wakeup_pos_only_loss": valid_result["wakeup_pos_only_loss"],
             }
         )
         if epoch % log_interval == 0:

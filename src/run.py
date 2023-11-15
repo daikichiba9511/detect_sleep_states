@@ -317,7 +317,7 @@ class Runner:
                 logits_this_batch = []
 
                 # Make preds for this batch
-                pred_this_batch = []
+                pred_this_batch = torch.zeros((len(x), duration, 3))
                 for model in models:
                     out = model(x)
                     # (BS, pred_length, n_class), pred_length = duration // downsample_rate
@@ -327,12 +327,9 @@ class Runner:
                         pred, size=[duration, pred.shape[2]], antialias=False
                     )
                     logits_this_batch.append(logits.detach().cpu().float())
-                    pred_this_batch.append(pred.numpy())
+                    pred_this_batch += pred
 
-                # Aggregate preds for this batch
-                pred_this_batch = np.concatenate(pred_this_batch)
-                if len(models) > 1:
-                    pred_this_batch = pred_this_batch.max(0)
+                pred_this_batch /= len(models)
                 preds.append(pred_this_batch)
 
                 # Only for validation

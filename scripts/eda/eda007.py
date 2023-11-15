@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import importlib
 import matplotlib.pyplot as plt
-from matplotlib import figure
+from matplotlib import figure, axes
 
 # device = torch.device("cuda")
 device = torch.device("cpu")
@@ -65,6 +65,7 @@ model = models.Spectrogram2DCNN(
     in_channels=feature_extractor.out_chans,
     encoder_weights=params["encoder_weights"],
     use_sample_weights=True,
+    use_custom_encoder=False,
 )
 model = model.to(device).train()
 print(model.load_state_dict(torch.load("./output/exp035/exp035_model_fold0.pth")))
@@ -190,16 +191,29 @@ def plot_wavegrame_with_raw_signal(
     wg = wavegram.permute(1, 2, 0).detach().cpu().numpy()
     # label = label.detach().cpu().numpy()
 
-    fig, axes = plt.subplots(2, 1, figsize=(20, 10))
-    assert isinstance(axes, np.ndarray)
+    chunk_size = 500
+    num_chunk = wg.shape[1] // chunk_size
+    print(num_chunk, wg.shape)
+
+    fig, ax = plt.subplots(num_chunk, 1, figsize=(20, 10))
+    assert isinstance(ax, np.ndarray)
+    # assert isinstance(ax, axes.Axes)
     assert isinstance(fig, figure.Figure)
 
-    axes[0].imshow(wg, label="wavegram")
+    for i in range(num_chunk - 1):
+        start = i * chunk_size
+        end = min((i + 1) * chunk_size, wg.shape[1])
+        wg_chunk = wg[:, start:end, :]
+        # print(wg_chunk.shape)
+        ax[i].imshow(wg_chunk, label="wavegram")
+
+    # axes[0].imshow(wg, label="wavegram")
     # axes[1].plot(label[..., 0], label="sleep")
     # axes[1].plot(label[..., 1], label="onset")
     # axes[1].plot(label[..., 2], label="wakeup")
-    fig.legend()
-    return fig, axes
+    # fig.legend()
+    fig.tight_layout()
+    return fig, ax
 
 
 save_dir = pathlib.Path("./output/eda/eda007")

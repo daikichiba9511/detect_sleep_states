@@ -123,6 +123,7 @@ def valid_one_epoch_v4(
     losses = AverageMeter("loss")
     onset_losses = AverageMeter("onset_loss")
     wakeup_losses = AverageMeter("wakeup_loss")
+    sleep_losses = AverageMeter("sleep_loss")
     onset_pos_only_losses = AverageMeter("onset_pos_only_loss")
     wakeup_pos_only_losses = AverageMeter("wakeup_pos_only_loss")
     bce = nn.BCEWithLogitsLoss()
@@ -146,6 +147,15 @@ def valid_one_epoch_v4(
                 pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
 
             logits = out["logits"].detach()
+
+            # Loss_sleep
+            y_sleep = y[:, :, 0]
+            y_sleep_pos_indices = y_sleep > 0
+            loss_sleep = bce(
+                logits[y_sleep_pos_indices][:, 0], y_sleep[y_sleep_pos_indices]
+            )
+            if not torch.isnan(loss_sleep):
+                sleep_losses.update(loss_sleep.item())
 
             # Loss_onset
             y_onset = y[:, :, 1]
@@ -188,6 +198,7 @@ def valid_one_epoch_v4(
         "loss": losses.avg,
         "onset_loss": onset_losses.avg,
         "wakeup_loss": wakeup_losses.avg,
+        "sleep_loss": sleep_losses.avg,
         "onset_pos_only_loss": onset_pos_only_losses.avg,
         "wakeup_pos_only_loss": wakeup_pos_only_losses.avg,
         "elapsed_time": time.time() - start_time,

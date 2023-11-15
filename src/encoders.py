@@ -161,7 +161,7 @@ class CustomUnet(nn.Module):
                 "Encoder channels and decoder channels should have the same length"
             )
         _check_reduction(self.encoder.feature_info.reduction())  # type: ignore
-        logger.info(name, encoder_channels, decoder_channels)
+        print(name, encoder_channels, decoder_channels)
 
         self.decoder = UnetDecoder(
             encoder_channels=encoder_channels,
@@ -181,12 +181,13 @@ class CustomUnet(nn.Module):
         features = self.encoder(x)
         decoder_output = self.decoder(features)
         logits = self.segmentation_head(decoder_output)
+        return logits
 
-        out = {
-            "logits": logits,
-            "cls_logits": None,
-        }
-        return out
+        # out = {
+        #     "logits": logits,
+        #     "cls_logits": None,
+        # }
+        # return out
 
 
 def _test_model():
