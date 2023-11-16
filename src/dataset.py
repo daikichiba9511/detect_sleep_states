@@ -585,6 +585,11 @@ def normalize(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
     return x
 
 
+def min_max_normalize(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
+    x = (x - x.min()) / (x.max() - x.min() + eps)
+    return x
+
+
 class SleepDatasetV3(Dataset):
     def __init__(
         self,
@@ -1028,9 +1033,9 @@ def load_features(
         series_dir = processed_dir / series_id
         this_features = []
         for feature_name in feature_names:
-            feature = np.load(series_dir / f"{feature_name}.npy")
-            if do_min_max_normalize:
-                feature = normalize(feature)
+            feature = np.load(series_dir / f"{feature_name}.npy").astype(np.float32)
+            if do_min_max_normalize and feature_name in ["anglez", "enmo"]:
+                feature = min_max_normalize(feature, eps=1e-7)
             this_features.append(feature)
         features[series_id] = np.stack(this_features, axis=1)
     return features
@@ -1063,9 +1068,9 @@ def load_chunk_features(
         # (steps, n_features)
         this_features = []
         for feature_name in feature_names:
-            feature = np.load(series_dir / f"{feature_name}.npy")
-            if do_min_max_normalize:
-                feature = normalize(feature)
+            feature = np.load(series_dir / f"{feature_name}.npy").astype(np.float32)
+            if do_min_max_normalize and feature_name in ["anglez", "enmo"]:
+                feature = min_max_normalize(feature, eps=1e-7)
             this_features.append(feature)
         this_features = np.stack(this_features, axis=1)
 
@@ -1927,6 +1932,16 @@ def test_build_dl_v4():
     print(batch["feature"].shape)
     print(batch["label"].shape)
     # print(batch["series_id"])
+
+    for i in range(batch["feature"].shape[1]):
+        print(
+            i,
+            batch["feature"][0, i, :].max(),
+            batch["feature"][0, i, :].min(),
+            batch["feature"][0, i, :].mean(),
+            batch["feature"][0, i, :].std(),
+            batch["feature"][0, i, :].median(),
+        )
 
     import matplotlib.pyplot as plt
 
