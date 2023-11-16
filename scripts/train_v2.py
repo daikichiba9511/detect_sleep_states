@@ -3,9 +3,9 @@ import pprint
 import time
 import warnings
 from functools import partial
-import numpy as np
-
 from logging import INFO
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.cuda.amp.autocast_mode import autocast
@@ -13,14 +13,14 @@ from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from src.dataset import mean_std_normalize_label
-from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold, mixup
 from src import models as my_models
+from src.dataset import mean_std_normalize_label
+from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, mixup, train_one_fold
 from src.utils import (
     LoggingUtils,
     get_class_vars,
-    seed_everything,
     get_commit_head_hash,
+    seed_everything,
 )
 
 warnings.filterwarnings("ignore")

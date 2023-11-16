@@ -1,6 +1,6 @@
+import pathlib
 import time
 from logging import getLogger
-import pathlib
 from pathlib import Path
 from typing import Any, Callable, Literal, Protocol, Sequence, cast
 

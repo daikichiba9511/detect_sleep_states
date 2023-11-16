@@ -1,23 +1,23 @@
 import importlib
 from logging import getLogger
-from typing import Callable, Sequence
 from pathlib import Path
+from typing import Callable, Sequence
 
 import numpy as np
 import pandas as pd
 import polars as pl
 import torch
-from torch.cuda.amp.autocast_mode import autocast
 import torch.nn as nn
 import torchvision.transforms.functional as TF
+from torch.cuda.amp.autocast_mode import autocast
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from src.tools import AverageMeter
 from src import dataset
-from src.losses import build_criterion
-from src.models import build_model, SleepTransformer, Spectrogram2DCNN
 from src import utils as my_utils
+from src.losses import build_criterion
+from src.models import SleepTransformer, Spectrogram2DCNN, build_model
+from src.tools import AverageMeter
 
 logger = getLogger(__name__)
 

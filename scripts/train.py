@@ -15,8 +15,8 @@ from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold
 from src.utils import (
     LoggingUtils,
     get_class_vars,
-    seed_everything,
     get_commit_head_hash,
+    seed_everything,
 )
 
 warnings.filterwarnings("ignore")

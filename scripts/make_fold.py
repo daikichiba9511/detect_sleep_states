@@ -4,7 +4,6 @@ import pandas as pd
 import polars as pl
 from sklearn.model_selection import GroupKFold
 
-
 from src import utils
 
 
@@ -40,8 +39,9 @@ def make_fold(cfg, n_splits=5) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    import numpy as np
     import json
+
+    import numpy as np
 
     print("root: ", Config.root_dir)
     print("seed: ", Config.seed)

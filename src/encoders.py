@@ -1,3 +1,4 @@
+from logging import getLogger
 from typing import Sequence
 
 import segmentation_models_pytorch as smp
@@ -5,12 +6,9 @@ import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from segmentation_models_pytorch.base import heads as smp_bheads
 from segmentation_models_pytorch.base import initialization as smp_binit
 from segmentation_models_pytorch.base import modules as smp_bmd
-from segmentation_models_pytorch.base import heads as smp_bheads
-from logging import getLogger
-
 
 logger = getLogger(__name__)
 

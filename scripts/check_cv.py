@@ -1,6 +1,7 @@
-from pathlib import Path
-import polars as pl
 import argparse
+from pathlib import Path
+
+import polars as pl
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--path", type=str)

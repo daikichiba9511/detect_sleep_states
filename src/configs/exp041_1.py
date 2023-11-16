@@ -1,7 +1,6 @@
-from pathlib import Path
 import pathlib
+from pathlib import Path
 from typing import Any
-
 
 from src import utils
 

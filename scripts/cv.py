@@ -1,20 +1,19 @@
 import argparse
+import copy
 import importlib
+import pathlib
 import pprint
 from typing import Sequence
 
-import pathlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import polars as pl
-
-import matplotlib.pyplot as plt
-from matplotlib import figure, axes
+from matplotlib import axes, figure
 
 from src import metrics
 from src.run import Runner
 from src.utils import LoggingUtils, get_class_vars
-import copy
 
 logger = LoggingUtils.get_stream_logger(20)
 

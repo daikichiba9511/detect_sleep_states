@@ -1,14 +1,13 @@
-from typing import Protocol, Any, Callable
+from typing import Any, Callable, Protocol
 
+import segmentation_models_pytorch as smp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms.functional as TF
 import torchaudio.transforms as TAT
-import segmentation_models_pytorch as smp
+import torchvision.transforms.functional as TF
 
-
-from src import decoders, feature_extractors, augmentations, encoders
+from src import augmentations, decoders, encoders, feature_extractors
 
 
 class ResidualBiGRU(nn.Module):
@@ -828,6 +827,7 @@ def _test_run_model3():
     profile = False
     if profile:
         import os
+
         import memray
 
         os.remove("./model_forwad.bin")
@@ -934,6 +934,7 @@ def _test_run_model5():
 
     import pathlib
     from pathlib import Path
+
     from src import dataset
 
     class Config:

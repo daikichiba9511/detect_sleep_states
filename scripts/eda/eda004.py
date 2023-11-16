@@ -1,6 +1,7 @@
-import polars as pl
-from pathlib import Path
 import json
+from pathlib import Path
+
+import polars as pl
 
 
 class Config:

@@ -1,9 +1,7 @@
-from pathlib import Path
-import pathlib
-from typing import Any
-
-
 import json
+import pathlib
+from pathlib import Path
+from typing import Any
 
 
 def _load_series(path: Path, key: str, fold: int) -> list[str]:

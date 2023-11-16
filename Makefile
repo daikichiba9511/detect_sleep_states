@@ -69,6 +69,7 @@ train2: ## train model by train_v2.py
 train3: ## train model by train_v3.py
 	@PYTHONPATH=${PYTHONPATH} rye run python scripts/train_v3.py \
 		--config $(CONFIG) \
+		--fold $(FOLD) \
 		--model_compile
 
 .PHONY: train-all

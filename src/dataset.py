@@ -1,9 +1,10 @@
+import json
+import multiprocessing as mp
 import pathlib
 import random
 from pathlib import Path
 from typing import Protocol, Sequence, cast
 
-import multiprocessing as mp
 import joblib
 import numpy as np
 import pandas as pd
@@ -693,7 +694,9 @@ class SleepDatasetV3(Dataset):
         # gaussian distribution function
         r = np.arange(-n // 2, n // 2 + 1)
         return [
-            1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-(float(x) ** 2) / (2 * sigma**2))
+            1
+            / (sigma * np.sqrt(2 * np.pi))
+            * np.exp(-(float(x) ** 2) / (2 * sigma**2))
             for x in r
         ]
 
@@ -1181,6 +1184,10 @@ class SleepSegTrainDataset(Dataset):
         )
         self.sample_per_epoch = sample_per_epoch
         self.bg_sampling_rate = cfg.bg_sampling_rate
+
+        # exp053
+        with pathlib.Path("./output/series_weights/series_weights.json").open("r") as f:
+            self.series_weights = json.load(f)
 
     def __len__(self) -> int:
         return (
