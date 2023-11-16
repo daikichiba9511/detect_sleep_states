@@ -68,3 +68,41 @@ print(
     {df_train_series["step"].median() = }
     """
 )
+
+print(
+    df_train_series.filter(pl.col("series_id") == "038441c925bb")
+    .with_columns(
+        [
+            pl.col("timestamp").str.to_datetime("%Y-%m-%dT%H:%M:%S%z"),
+        ]
+    )
+    .with_columns(
+        [
+            pl.col("timestamp").dt.day().alias("day"),
+            pl.col("timestamp").dt.month().alias("month"),
+        ]
+    )
+    .filter((pl.col("month") == 8) & (pl.col("day") == 16))
+)
+
+# nullを含んでるseries_idと含んでないのに分ける
+df_train_events_null = df_train_events.filter(pl.col("step").is_null())[
+    "series_id"
+].unique()
+df_train_events_not_null = df_train_events.filter(pl.col("step").is_not_null())[
+    "series_id"
+].unique()
+print(df_train_events_null)
+print(df_train_events_not_null)
+import json
+
+with open("./output/series_ids.json", "w") as fp:
+    json.dump(
+        {
+            "non_null": df_train_events_not_null.to_list(),
+            "null": df_train_events_null.to_list(),
+        },
+        fp=fp,
+        indent=4,
+        ensure_ascii=False,
+    )

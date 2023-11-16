@@ -24,6 +24,23 @@ FEATURE_NAMES = [
     "month_cos",
     "minute_sin",
     "minute_cos",
+    # -- Shifted(exp051)
+    "anglez_shifted_prev_1",
+    "anglez_shifted_next_1",
+    "anglez_shifted_prev_5",
+    "anglez_shifted_next_5",
+    "anglez_shifted_prev_11",
+    "anglez_shifted_next_11",
+    "anglez_shifted_prev_32",
+    "anglez_shifted_next_32",
+    "enmo_shifted_prev_1",
+    "enmo_shifted_next_1",
+    "enmo_shifted_prev_5",
+    "enmo_shifted_next_5",
+    "enmo_shifted_prev_11",
+    "enmo_shifted_next_11",
+    "enmo_shifted_prev_32",
+    "enmo_shifted_next_32",
 ]
 
 ANGLEZ_MEAN = -8.810476
@@ -39,12 +56,31 @@ def to_coord(x: pl.Expr, max_: int, name: str) -> list[pl.Expr]:
     return [x_sin.alias(f"{name}_sin"), x_cos.alias(f"{name}_cos")]
 
 
+def shifted(series: pl.Expr, shift: int, name: str) -> list[pl.Expr]:
+    return [
+        series.shift(-shift).alias(f"{name}_shifted_prev_{shift}"),
+        series.shift(shift).alias(f"{name}_shifted_next_{shift}"),
+    ]
+
+
 def add_features(series_df: pl.DataFrame) -> pl.DataFrame:
-    series_df = series_df.with_columns(
-        *to_coord(pl.col("timestamp").dt.hour(), 24, "hour"),
-        *to_coord(pl.col("timestamp").dt.month(), 12, "month"),
-        *to_coord(pl.col("timestamp").dt.minute(), 60, "minute"),
-    ).select("series_id", *FEATURE_NAMES)
+    series_df = (
+        series_df.with_columns(
+            *to_coord(pl.col("timestamp").dt.hour(), 24, "hour"),
+            *to_coord(pl.col("timestamp").dt.month(), 12, "month"),
+            *to_coord(pl.col("timestamp").dt.minute(), 60, "minute"),
+            *shifted(pl.col("anglez"), 1, "anglez"),
+            *shifted(pl.col("anglez"), 5, "anglez"),
+            *shifted(pl.col("anglez"), 11, "anglez"),
+            *shifted(pl.col("anglez"), 32, "anglez"),
+            *shifted(pl.col("enmo"), 1, "enmo"),
+            *shifted(pl.col("enmo"), 5, "enmo"),
+            *shifted(pl.col("enmo"), 11, "enmo"),
+            *shifted(pl.col("enmo"), 32, "enmo"),
+        )
+        .select("series_id", *FEATURE_NAMES)
+        .fill_null(0.0)
+    )
     return series_df
 
 
