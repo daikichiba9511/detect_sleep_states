@@ -88,6 +88,14 @@ train2-all: ## train model 2 with 5-fold
 			--model_compile \
 	done
 
+.PHONY: train3-all
+train3-all: ## train model 3 with 5-fold
+	@for i in {1..4}; do \
+		PYTHONPATH=${PYTHONPATH} rye run python scripts/train_v3.py \
+			--config $(CONFIG) \
+			--fold $$i; \
+			--model_compile \
+
 .PHONY: train-debug
 train-debug: ## debug of train.py
 	@PYTHONPATH=${PYTHONPATH} rye run python scripts/train.py \
