@@ -1015,6 +1015,7 @@ def load_features(
     series_ids: Sequence[str] | None,
     processed_dir: Path,
     phase: str,
+    do_min_max_normalize: bool,
 ) -> dict[str, np.ndarray]:
     features = {}
 
@@ -1025,10 +1026,12 @@ def load_features(
 
     for series_id in tqdm(series_ids, desc="Load features"):
         series_dir = processed_dir / series_id
-        this_features = [
-            np.load(series_dir / f"{feature_name}.npy")
-            for feature_name in feature_names
-        ]
+        this_features = []
+        for feature_name in feature_names:
+            feature = np.load(series_dir / f"{feature_name}.npy")
+            if do_min_max_normalize:
+                feature = normalize(feature)
+            this_features.append(feature)
         features[series_id] = np.stack(this_features, axis=1)
     return features
 
@@ -1039,6 +1042,7 @@ def load_chunk_features(
     series_ids: Sequence[str] | None,
     processed_dir: Path,
     phase: str,
+    do_min_max_normalize: bool,
 ) -> dict[str, np.ndarray]:
     if series_ids is None:
         series_ids = [
@@ -1059,7 +1063,10 @@ def load_chunk_features(
         # (steps, n_features)
         this_features = []
         for feature_name in feature_names:
-            this_features.append(np.load(series_dir / f"{feature_name}.npy"))
+            feature = np.load(series_dir / f"{feature_name}.npy")
+            if do_min_max_normalize:
+                feature = normalize(feature)
+            this_features.append(feature)
         this_features = np.stack(this_features, axis=1)
 
         num_chunks = (len(this_features) // seq_len) + 1
@@ -1377,6 +1384,7 @@ def _init_test_dl(
         series_ids=series_ids,
         processed_dir=processed_dir,
         phase="test",
+        do_min_max_normalize=True,
     )
     ds = SleepSegTestDataset(cfg, chunk_features)
     dl = DataLoader(
@@ -1412,6 +1420,7 @@ def _init_valid_dl(
         series_ids=valid_series,
         processed_dir=processed_dir,
         phase="valid",
+        do_min_max_normalize=True,
     )
     ds = SleepSegValidDataset(cfg, valid_chunk_features, valid_event_df)
     dl = DataLoader(
@@ -1447,6 +1456,7 @@ def _init_train_dl(
         series_ids=train_series,
         processed_dir=processed_dir,
         phase="train",
+        do_min_max_normalize=True,
     )
     ds = SleepSegTrainDataset(
         cfg, train_event_df, train_features, sample_per_epoch=sample_per_epoch
