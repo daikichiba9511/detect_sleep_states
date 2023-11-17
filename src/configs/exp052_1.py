@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp052"
+    name: str = "exp052_1"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    min_max_norm baseline
+    52+min_max_norm
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -30,7 +30,7 @@ class Config:
     num_epochs: int = 10 * 4
     batch_size: int = int(8 * 4)
     num_workers: int = 8 * 1
-    num_grad_accum: int = 1
+    num_grad_accum: int = 4
 
     # Model
     model_type: str = "Spectrogram2DCNN"
@@ -70,6 +70,7 @@ class Config:
     offset: int = 10
     sigma: int = 10
     bg_sampling_rate: float = 0.5
+    do_min_max_norm: bool = True
 
     sample_per_epoch: int | None = None
     """SleepSegTrainDatasetの__len__で返される値。Noneの場合はlen(series_ids)."""
@@ -78,8 +79,8 @@ class Config:
     mixup_prob: float = 0.0
     downsample_rate: int = 2
     upsample_rate: int = 1
+    # seq_len: int = 32 * 16 * 20
     seq_len: int = 32 * 16 * 20
-    # seq_len: int = 32 * 16 * 30
 
     fold: int = 0
     train_series: list[str] = utils.load_series(

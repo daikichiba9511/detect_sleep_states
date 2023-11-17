@@ -51,7 +51,7 @@ df_valid_solution = df_valid_solution[~df_valid_solution["step"].isnull()]
 print(df_valid_solution)
 
 configs = []
-if args.all:
+for fold in range(args.fold + 1):
     config = importlib.import_module(f"src.configs.{args.config}").Config
     config_ = config()
     config_.fold = args.fold
@@ -62,12 +62,11 @@ if args.all:
     #     "model_path: {model_path}".format(model_path=config_.model_save_path)
     # )
     configs.append(copy.deepcopy(config_))
-else:
-    configs.append(config)
 
 print(f"len(configs): {len(configs)}")
 
 submission = Runner(
+    # configs=[configs[args.fold]],
     configs=configs,
     dataconfig=configs[args.fold],
     is_val=True,

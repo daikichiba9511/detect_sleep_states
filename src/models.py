@@ -597,6 +597,7 @@ class Spectrogram2DCNN(nn.Module):
         self,
         x: torch.Tensor,
         labels: torch.Tensor | None = None,
+        sample_weights: torch.Tensor | None = None,
         do_mixup: bool = False,
         do_mixup_raw_signal: bool = False,
     ) -> dict[str, torch.Tensor]:
@@ -626,7 +627,14 @@ class Spectrogram2DCNN(nn.Module):
         output = {"logits": logits}
         if labels is not None:
             # (batch_size, pred_len, n_classes)
-            loss = self.loss_fn(logits, labels)
+            if sample_weights is None:
+                loss = self.loss_fn(logits, labels)
+            else:
+                loff_fn = nn.BCEWithLogitsLoss(reduction="none")
+                # (batch_size, pred_len, n_classes)
+                loss = loff_fn(logits, labels)
+                # (batch_size, pred_len)
+                loss = torch.mean(sample_weights * loss.sum(1))
 
             if self.use_aux_head:
                 aux_labels = torch.max(labels, dim=1)[0].unsqueeze(-1)

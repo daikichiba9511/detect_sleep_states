@@ -5,6 +5,7 @@ import warnings
 from functools import partial
 from logging import INFO
 
+import pathlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -52,6 +53,7 @@ def train_one_epoch_v4(
     # -- additional params
     mixup_raw_signal_prob: float = 0.0,
     mixup_prob: float = 0.0,
+    do_sample_weights: bool = False,
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).train()
@@ -67,6 +69,11 @@ def train_one_epoch_v4(
             X = batch["feature"].to(device, non_blocking=True)
             y = batch["label"].to(device, non_blocking=True)
 
+            if do_sample_weights:
+                sample_weights = batch["weight"].to(device, non_blocking=True)
+            else:
+                sample_weights = None
+
             # mixed = False
             # if np.random.rand() < 0.5:
             #     X, y, y_mix, lam = mixup(X, y)
@@ -77,7 +84,11 @@ def train_one_epoch_v4(
             do_mixup = np.random.rand() < mixup_prob
             do_mixup_raw_signal = np.random.rand() < mixup_raw_signal_prob
             out = model(
-                X, y, do_mixup=do_mixup, do_mixup_raw_signal=do_mixup_raw_signal
+                X,
+                y,
+                do_mixup=do_mixup,
+                do_mixup_raw_signal=do_mixup_raw_signal,
+                sample_weights=sample_weights,
             )  # Spectrogram2DCNN
             loss = out["loss"]
 
@@ -210,6 +221,17 @@ def valid_one_epoch_v4(
 def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> None:
     cfg = importlib.import_module(f"src.configs.{config}").Config
     cfg.model_save_path = cfg.output_dir / (cfg.model_save_name + f"{fold}.pth")
+    train_series_path = pathlib.Path(
+        "./input/for_train/folded_series_ids_fold5_seed42.json"
+    )
+    # importした時点でfold=0で評価されてるので再度上書き
+    cfg.train_series = utils.load_series(
+        train_series_path, "train_series", fold=int(fold)
+    )
+    cfg.valid_series = utils.load_series(
+        train_series_path, "valid_series", fold=int(fold)
+    )
+
     if debug:
         cfg.train_series = cfg.train_series[:5]
         cfg.sample_per_epoch = None
@@ -232,13 +254,14 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
             num_grad_accum=cfg.num_grad_accum,
             mixup_prob=cfg.mixup_prob,
             mixup_raw_signal_prob=getattr(cfg, "mixup_raw_signal_prob", 0.0),
+            do_sample_weights=getattr(cfg, "do_sample_weights", False),
         ),
         partial(valid_one_epoch_v4),
         model_compile=model_compile,
         # compile_mode="max-autotune",
         compile_mode="default",
     )
-    LOGGER.info(f"Fold {fold} training has finished.")
+    LOGGER.info(f"{cfg.name}: Fold {fold} training has finished.")
 
 
 if __name__ == "__main__":

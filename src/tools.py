@@ -367,7 +367,7 @@ def train_one_fold(
     model_compile: bool = False,
     compile_mode: str = "default",
 ) -> None:
-    logger.info(f"Start training fold{fold}")
+    logger.info(f"Start training {config.name} fold{fold}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(config).to(device)
     if model_compile:

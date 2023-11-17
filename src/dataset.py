@@ -694,9 +694,7 @@ class SleepDatasetV3(Dataset):
         # gaussian distribution function
         r = np.arange(-n // 2, n // 2 + 1)
         return [
-            1
-            / (sigma * np.sqrt(2 * np.pi))
-            * np.exp(-(float(x) ** 2) / (2 * sigma**2))
+            1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-(float(x) ** 2) / (2 * sigma**2))
             for x in r
         ]
 
@@ -1188,6 +1186,9 @@ class SleepSegTrainDataset(Dataset):
         # exp053
         with pathlib.Path("./output/series_weights/series_weights.json").open("r") as f:
             self.series_weights = json.load(f)
+            self.series_weights = {
+                d["series_id"]: d["weight"] for d in self.series_weights
+            }
 
     def __len__(self) -> int:
         return (
@@ -1200,6 +1201,7 @@ class SleepSegTrainDataset(Dataset):
         event = np.random.choice(["onset", "wakeup"], p=[0.5, 0.5])  # type: ignore
         pos = self.event_df.at[index, event]
         series_id = self.event_df.at[index, "series_id"]
+        series_weight = self.series_weights[series_id]
         this_event_row = self.event_df.query("series_id == @series_id")
         this_event_row = this_event_row.reset_index(drop=True)
         this_features = self.features[series_id]
@@ -1235,6 +1237,7 @@ class SleepSegTrainDataset(Dataset):
             "series_id": series_id,
             "feature": feature,  # (num_features, upsampled_num_frames)
             "label": torch.FloatTensor(label),  # (num_frames, 3)
+            "weight": series_weight,
         }
 
 
@@ -1387,6 +1390,7 @@ def _init_test_dl(
     features: list[str],
     num_workers: int,
     seed: int,
+    do_min_max_normalize: bool = True,
 ) -> DataLoader:
     feature_dir = pathlib.Path(processed_dir)
     series_ids = [x.name for x in feature_dir.glob("*")]
@@ -1396,7 +1400,7 @@ def _init_test_dl(
         series_ids=series_ids,
         processed_dir=processed_dir,
         phase="test",
-        do_min_max_normalize=True,
+        do_min_max_normalize=do_min_max_normalize,
     )
     ds = SleepSegTestDataset(cfg, chunk_features)
     dl = DataLoader(
@@ -1423,6 +1427,7 @@ def _init_valid_dl(
     features: list[str],
     num_workers: int,
     seed: int,
+    do_min_max_normalize: bool = True,
 ) -> DataLoader:
     event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
     valid_event_df = event_df.filter(pl.col("series_id").is_in(valid_series))
@@ -1432,7 +1437,7 @@ def _init_valid_dl(
         series_ids=valid_series,
         processed_dir=processed_dir,
         phase="valid",
-        do_min_max_normalize=True,
+        do_min_max_normalize=do_min_max_normalize,
     )
     ds = SleepSegValidDataset(cfg, valid_chunk_features, valid_event_df)
     dl = DataLoader(
@@ -1460,6 +1465,7 @@ def _init_train_dl(
     num_workers: int,
     seed: int,
     sample_per_epoch: int | None = None,
+    do_min_max_normalize: bool = True,
 ) -> DataLoader:
     event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
     train_event_df = event_df.filter(pl.col("series_id").is_in(train_series))
@@ -1468,7 +1474,7 @@ def _init_train_dl(
         series_ids=train_series,
         processed_dir=processed_dir,
         phase="train",
-        do_min_max_normalize=True,
+        do_min_max_normalize=do_min_max_normalize,
     )
     ds = SleepSegTrainDataset(
         cfg, train_event_df, train_features, sample_per_epoch=sample_per_epoch
@@ -1499,6 +1505,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
             num_workers=num_workers,
             seq_len=cfg.seq_len,
             features=cfg.features,
+            do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
         )
 
     if phase == "valid":
@@ -1512,6 +1519,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
             features=cfg.features,
             data_dir=cfg.data_dir,
             processed_dir=cfg.processed_dir,
+            do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
         )
 
     # Train
@@ -1527,6 +1535,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
         data_dir=cfg.data_dir,
         processed_dir=cfg.processed_dir,
         sample_per_epoch=cfg.sample_per_epoch,
+        do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
     )
 
 
@@ -1928,8 +1937,8 @@ def test_build_dl_v4():
         sample_per_epoch: int | None = None
 
     with my_utils.trace("dataset load"):
-        # dl = init_dataloader("train", Config)
-        dl = init_dataloader("valid", Config)
+        dl = init_dataloader("train", Config)
+        # dl = init_dataloader("valid", Config)
 
     batch = next(iter(dl))
     print(type(batch))
@@ -1938,7 +1947,8 @@ def test_build_dl_v4():
 
     print(batch["feature"].shape)
     print(batch["label"].shape)
-    # print(batch["series_id"])
+    print(batch["series_id"])
+    print(batch["weight"])
 
     for i in range(batch["feature"].shape[1]):
         print(
