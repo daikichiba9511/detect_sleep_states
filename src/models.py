@@ -555,7 +555,7 @@ class Spectrogram2DCNN(nn.Module):
                 pretrained=encoder_weights is not None,
                 decoder_channels=[258, 128, 64, 32, 16],
                 n_classes=1,
-                dropout=0.2,
+                # dropout=0.2,
             )
         else:
             self.encoder = smp.Unet(
@@ -600,6 +600,7 @@ class Spectrogram2DCNN(nn.Module):
         sample_weights: torch.Tensor | None = None,
         do_mixup: bool = False,
         do_mixup_raw_signal: bool = False,
+        do_cutmix: bool = False,
     ) -> dict[str, torch.Tensor]:
         if do_mixup_raw_signal and labels is not None:
             x, labels, mixed_labels, lam = augmentations.mixup(x, labels)
@@ -617,6 +618,9 @@ class Spectrogram2DCNN(nn.Module):
             x1, labels, mixed_labels, lam = augmentations.mixup(x1, labels)
         else:
             mixed_labels, lam = None, None
+
+        if do_cutmix and labels is not None:
+            x1, labels, _, _ = augmentations.cutmix(x1, labels)
         #
         # print("mel_conv before", x.shape)
         # x = self.mel_conv(x)
@@ -634,7 +638,7 @@ class Spectrogram2DCNN(nn.Module):
                 # (batch_size, pred_len, n_classes)
                 loss = loff_fn(logits, labels)
                 # (batch_size, pred_len)
-                loss = torch.mean(sample_weights * loss.sum(1))
+                loss = torch.mean(sample_weights * loss.mean(1).mean(1))
 
             if self.use_aux_head:
                 aux_labels = torch.max(labels, dim=1)[0].unsqueeze(-1)
@@ -655,6 +659,10 @@ class Spectrogram2DCNN(nn.Module):
 
                 loss = lam * loss + (1 - lam) * mixed_loss
                 # loss = mixed_loss
+
+            if do_cutmix and labels is not None:
+                cutmix_loss = self.loss_fn(logits, labels)
+                loss = cutmix_loss
 
             output["loss"] = loss
         return output

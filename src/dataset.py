@@ -1106,6 +1106,11 @@ def make_label(
         onset = max(0, onset)
         wakeup = min(num_frames, wakeup)
         label[onset:wakeup, 0] = 1  # 0: sleep
+
+        # wakeup
+        # label[:onset, 4] = 1
+        # label[wakeup:, 4] = 1
+
     return label
 
 
@@ -1135,6 +1140,9 @@ def negative_sampling(this_event_df: pd.DataFrame, num_steps: int) -> int:
     )
     neg_positions = list(set(range(num_steps)) - pos_positions)
     return random.sample(neg_positions, 1)[0]
+
+
+# 5760 => 2880
 
 
 def nearest_valid_size(input_size: int, downsample_factor: int) -> int:
@@ -1236,7 +1244,7 @@ class SleepSegTrainDataset(Dataset):
         return {
             "series_id": series_id,
             "feature": feature,  # (num_features, upsampled_num_frames)
-            "label": torch.FloatTensor(label),  # (num_frames, 3)
+            "label": torch.FloatTensor(label),  # (num_frames, 3) (2880, 3)
             "weight": series_weight,
         }
 
@@ -1439,6 +1447,7 @@ def _init_valid_dl(
         phase="valid",
         do_min_max_normalize=do_min_max_normalize,
     )
+    print("Valid", seq_len)
     ds = SleepSegValidDataset(cfg, valid_chunk_features, valid_event_df)
     dl = DataLoader(
         ds,

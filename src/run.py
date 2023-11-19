@@ -334,9 +334,14 @@ class Runner:
 
                 # Only for validation
                 if loss_fn is not None and loss_monitor is not None:
-                    logits = torch.concat(logits_this_batch)
-                    if len(models) != 1:
-                        logits = logits.max(0)
+                    logits = torch.concat(logits_this_batch, dim=0).reshape(
+                        len(models), x.shape[0], -1, 3
+                    )
+                    if len(models) != 1 and len(models) == logits.shape[0]:
+                        logits = logits.mean(dim=0)
+                    if len(models) == 1 and len(models) == logits.shape[0]:
+                        logits = logits.squeeze(0)
+
                     labels = batch["label"].to(logits.device)
                     loss = loss_fn(logits, labels)
                     loss_monitor.update(loss.item())
@@ -391,6 +396,7 @@ class Runner:
                 duration=self.configs[0].seq_len,
                 score_thr=self.configs[0].postprocess_params["score_thr"],
                 distance=self.configs[0].postprocess_params["distance"],
+                # distance=24 * 60 * 8,
             )
             print(outs)
 

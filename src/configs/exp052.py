@@ -78,7 +78,8 @@ class Config:
     mixup_prob: float = 0.0
     downsample_rate: int = 2
     upsample_rate: int = 1
-    seq_len: int = 32 * 16 * 20
+    seq_len: int = 24 * 60 * 8
+    # seq_len: int = 32 * 16 * 20
     # seq_len: int = 32 * 16 * 30
 
     fold: int = 0

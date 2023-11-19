@@ -70,7 +70,7 @@ class Config:
     offset: int = 10
     sigma: int = 10
     bg_sampling_rate: float = 0.5
-    do_sample_weight: bool = True
+    do_sample_weights: bool = True
     """Trueの場合はSpectrogram2DCNNのforwardでsample_weightsを渡す。null_rateでサンプルの重みづけ"""
 
     sample_per_epoch: int | None = None

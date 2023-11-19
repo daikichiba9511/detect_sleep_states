@@ -55,8 +55,10 @@ for fold in range(args.fold + 1):
     config = importlib.import_module(f"src.configs.{args.config}").Config
     config_ = config()
     config_.fold = args.fold
+
     config_.model_save_path = (
         config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+        # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
     )
     # logger.info(
     #     "model_path: {model_path}".format(model_path=config_.model_save_path)
@@ -66,8 +68,8 @@ for fold in range(args.fold + 1):
 print(f"len(configs): {len(configs)}")
 
 submission = Runner(
-    # configs=[configs[args.fold]],
-    configs=configs,
+    configs=[configs[args.fold]],
+    # configs=configs,
     dataconfig=configs[args.fold],
     is_val=True,
     device=args.device,

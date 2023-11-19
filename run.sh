@@ -52,6 +52,12 @@
 # make train3 CONFIG=exp045 # 0/5folds
 
 # 41+seq_len=24*60*10(046), 32*16*30(047), 24*60*20(048)
-make train3 CONFIG=exp046 # 0/5folds
-make train3 CONFIG=exp047 # 0/5folds
-make train3 CONFIG=exp048 # 0/5folds
+# make train3 CONFIG=exp046 # 0/5folds
+# make train3 CONFIG=exp047 # 0/5folds
+# make train3 CONFIG=exp048 # 0/5folds
+
+# min_max_norm on anglez
+make train3 CONFIG=exp052 FOLD=0
+make train3 CONFIG=exp052 FOLD=1
+make train3 CONFIG=exp052_1 FOLD=0
+make train3 CONFIG=exp052_1 FOLD=1
