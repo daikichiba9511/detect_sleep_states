@@ -29,6 +29,64 @@ def mixup(
     return x_mix, y, shuffled_y, lam
 
 
+def rand_bbox1d(n_timesteps: int, lam: float) -> tuple[int, int]:
+    """Random bounding box
+
+    Args:
+        n_timesteps: number of timesteps
+        lam: lambda value
+
+    Returns:
+        cut_start: start index of cut
+        cut_end: end index of cut
+    """
+    cut_rate = np.sqrt(1.0 - lam)
+    cut_timesteps = int(n_timesteps * cut_rate)
+    cut_start = np.random.randint(0, n_timesteps - cut_timesteps)
+    cut_end = cut_start + cut_timesteps
+    return cut_start, cut_end
+
+
+def cutmix(
+    imgs: torch.Tensor, labels: torch.Tensor, lam: float, alpha: float = 0.4
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Cutmix
+
+    Args:
+        imgs: input batch, (bs, n_channels, n_timesteps)
+        labels: label batch, (bs, n_timesteps, n_classes)
+        lam: lambda value
+
+    Returns:
+        mixed_imgs: mixed input batch
+    """
+    bs = imgs.size(0)
+    random_index = torch.randperm(bs)
+
+    shuffled_imgs = imgs[random_index]
+    shuffled_labels = labels[random_index]
+
+    lam = np.random.uniform(alpha, alpha)
+    cut_start, cut_end = rand_bbox1d(imgs.size(2), lam)
+    mixed_imgs = torch.concatenate(
+        [
+            imgs[:, :, :cut_start],
+            shuffled_imgs[:, :, cut_start:cut_end],
+            imgs[:, :, cut_end:],
+        ],
+        dim=2,
+    )
+    mixed_labels = torch.concatenate(
+        [
+            labels[:, :cut_start, :],
+            shuffled_labels[:, cut_start:cut_end, :],
+            labels[:, cut_end:, :],
+        ],
+        dim=1,
+    )
+    return mixed_imgs, mixed_labels
+
+
 def made_spec_augment_func(
     time_mask_param: int, freq_mask_param: int
 ) -> Callable[[torch.Tensor], torch.Tensor]:
