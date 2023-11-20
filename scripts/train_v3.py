@@ -53,7 +53,9 @@ def train_one_epoch_v4(
     # -- additional params
     mixup_raw_signal_prob: float = 0.0,
     mixup_prob: float = 0.0,
+    cutmix_prob: float = 0.0,
     do_sample_weights: bool = False,
+    do_inverse_aug: bool = False,
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).train()
@@ -66,7 +68,9 @@ def train_one_epoch_v4(
     )
     for batch_idx, batch in pbar:
         with autocast(enabled=use_amp, dtype=torch.float16):
+            # (BS, n_features, seq_len)
             X = batch["feature"].to(device, non_blocking=True)
+            # (BS, seq_len//down_sample_rate, 3)
             y = batch["label"].to(device, non_blocking=True)
 
             if do_sample_weights:
@@ -81,12 +85,18 @@ def train_one_epoch_v4(
             # else:
             #     y_mix, lam = None, None
 
+            if do_inverse_aug and np.random.rand() < 0.5:
+                X = X[:, :, ::-1]
+                y = y[:, ::-1, :]
+
             do_mixup = np.random.rand() < mixup_prob
             do_mixup_raw_signal = np.random.rand() < mixup_raw_signal_prob
+            do_cutmix = np.random.rand() < cutmix_prob
             out = model(
                 X,
                 y,
                 do_mixup=do_mixup,
+                do_cutmix=do_cutmix,
                 do_mixup_raw_signal=do_mixup_raw_signal,
                 sample_weights=sample_weights,
             )  # Spectrogram2DCNN
@@ -248,15 +258,16 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
     train_one_fold(
         cfg,
         fold,
-        debug,
-        partial(
+        debug=debug,
+        train_one_epoch=partial(
             train_one_epoch_v4,
             num_grad_accum=cfg.num_grad_accum,
             mixup_prob=cfg.mixup_prob,
             mixup_raw_signal_prob=getattr(cfg, "mixup_raw_signal_prob", 0.0),
+            cutmix_prob=getattr(cfg, "cutmix_prob", 0.0),
             do_sample_weights=getattr(cfg, "do_sample_weights", False),
         ),
-        partial(valid_one_epoch_v4),
+        valid_one_epoch=partial(valid_one_epoch_v4),
         model_compile=model_compile,
         # compile_mode="max-autotune",
         compile_mode="default",

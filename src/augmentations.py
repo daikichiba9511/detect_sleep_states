@@ -29,6 +29,30 @@ def mixup(
     return x_mix, y, shuffled_y, lam
 
 
+def mixup_patch(
+    x: torch.Tensor, y: torch.Tensor, n_parts: int = 6
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Mixup patches in a sequence
+
+    Args:
+        x: input batch. shape: (bs, n_channels, height, n_timesteps)
+        y: label batch. shape: (bs, n_timesteps//downsample_rate, n_classes)
+        n_parts: number of parts to split
+
+    Returns:
+        mixed_x: mixed input batch
+        mixed_y: mixed label batch
+
+    References:
+    [1]
+    https://www.kaggle.com/competitions/birdclef-2021/discussion/243463
+    [2]
+    https://www.kaggle.com/code/leehann/birdclef-21-2nd-place-model-train-0-66#GeM-and-Mix-up
+    """
+    bs, n_channels, height, n_timesteps = x.shape
+    width = n_timesteps // n_parts
+
+
 def rand_bbox1d(n_timesteps: int, lam: float) -> tuple[int, int]:
     """Random bounding box
 
@@ -47,8 +71,8 @@ def rand_bbox1d(n_timesteps: int, lam: float) -> tuple[int, int]:
     return cut_start, cut_end
 
 
-def cutmix(
-    imgs: torch.Tensor, labels: torch.Tensor, lam: float, alpha: float = 0.4
+def cutmix_1d(
+    imgs: torch.Tensor, labels: torch.Tensor, alpha: float = 0.4
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Cutmix
 

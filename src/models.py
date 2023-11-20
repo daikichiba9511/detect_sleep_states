@@ -602,8 +602,25 @@ class Spectrogram2DCNN(nn.Module):
         do_mixup_raw_signal: bool = False,
         do_cutmix: bool = False,
     ) -> dict[str, torch.Tensor]:
+        """Forward
+
+        Args:
+            x: (batch_size, n_feats, seq_len)
+            labels: (batch_size, pred_len, n_classes)
+            sample_weights: (batch_size, ). 1.0 - null_rate
+            do_mixup: mixupを行うかどうか
+            do_mixup_raw_signal: mixupを行うかどうか
+            do_cutmix: cutmixを行うかどうか
+
+        Returns:
+            output: dict[str, torch.Tensor]
+
+        """
         if do_mixup_raw_signal and labels is not None:
             x, labels, mixed_labels, lam = augmentations.mixup(x, labels)
+        if do_cutmix and labels is not None:
+            x, labels = augmentations.cutmix_1d(x, labels)
+
         x1 = self.feature_extractor(x)  # (bs,nc,height,seq_len//downsample_rate)
         # print("wavegram", x1.shape)
 
@@ -619,8 +636,6 @@ class Spectrogram2DCNN(nn.Module):
         else:
             mixed_labels, lam = None, None
 
-        if do_cutmix and labels is not None:
-            x1, labels, _, _ = augmentations.cutmix(x1, labels)
         #
         # print("mel_conv before", x.shape)
         # x = self.mel_conv(x)

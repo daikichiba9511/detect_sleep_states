@@ -103,6 +103,7 @@ min_score_sid = min(score_per_sid, key=score_per_sid.get)  # type: ignore
 max_score_sid = max(score_per_sid, key=score_per_sid.get)  # type: ignore
 print(f"min score sid: {min_score_sid}, score: {score_per_sid[min_score_sid]}")
 print(f"max score sid: {max_score_sid}, score: {score_per_sid[max_score_sid]}")
+less_than_07_sid = [sid for sid, score in score_per_sid.items() if score < 0.7]
 
 print("\n score per sid")
 pprint.pprint(score_per_sid)
@@ -205,7 +206,7 @@ def _plot_events(
 
     # -- Plot events labels
     for event_name, step in zip(events["event"], events["step"]):
-        color = "red" if event_name == "onset" else "blue"
+        color = "red" if event_name == "onset" else "green"
         for i in range(len(features.columns)):
             ax[i].axvline(
                 step, color=color, linestyle="--", label=event_name, alpha=0.5
@@ -213,7 +214,7 @@ def _plot_events(
 
     # -- Plot preds
     for event_name, step, score in zip(preds["event"], preds["step"], preds["score"]):
-        color = "yellow" if event_name == "onset" else "green"
+        color = "yellow" if event_name == "onset" else "aqua"
         for i in range(len(features.columns)):
             ax[i].axvline(
                 step,
@@ -232,6 +233,7 @@ def _plot_events(
                 unique_handles_legends.append((handle, legend))
                 used_labels.add(legend)
         x.legend(*zip(*unique_handles_legends))
+    fig.tight_layout()
     return fig, ax
 
 
@@ -246,7 +248,9 @@ sids = [
     # "fe90110788d2",
     min_score_sid,
     max_score_sid,
+    *less_than_07_sid,
 ]
+print(f"{min_score_sid=}, {max_score_sid=}, {less_than_07_sid=}")
 for sid in sids:
     valid_sol_sid = df_valid_solution[df_valid_solution["series_id"] == sid]
     sub_sid = submission[submission["series_id"] == sid]
