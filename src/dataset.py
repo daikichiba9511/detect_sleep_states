@@ -3,7 +3,7 @@ import multiprocessing as mp
 import pathlib
 import random
 from pathlib import Path
-from typing import Protocol, Sequence, cast
+from typing import Protocol, Sequence, cast, TypeVar
 
 import joblib
 import numpy as np
@@ -1142,7 +1142,18 @@ def negative_sampling(this_event_df: pd.DataFrame, num_steps: int) -> int:
     return random.sample(neg_positions, 1)[0]
 
 
-# 5760 => 2880
+_T = TypeVar("_T", np.ndarray, torch.Tensor)
+
+
+def label_smoothing(label: _T, eps: float = 0.1) -> _T:
+    """
+    Args:
+        label: (num_frames, n_classes)
+    """
+    num_classes = label.shape[1]
+    # label smoothing for sleep(class 0)
+    label[0] = (1 - eps) * label[0] + eps / num_classes
+    return label
 
 
 def nearest_valid_size(input_size: int, downsample_factor: int) -> int:
@@ -1176,6 +1187,7 @@ class SleepSegTrainDataset(Dataset):
         df: pl.DataFrame,
         features: dict[str, np.ndarray],
         sample_per_epoch: int | None,
+        do_sleep_label_smoothing: bool = False,
     ) -> None:
         self.cfg = cfg
         self.event_df = (
@@ -1190,13 +1202,18 @@ class SleepSegTrainDataset(Dataset):
         )
         self.sample_per_epoch = sample_per_epoch
         self.bg_sampling_rate = cfg.bg_sampling_rate
+        self.do_sleep_label_smoothing = do_sleep_label_smoothing
 
         # exp053
-        with pathlib.Path("./output/series_weights/series_weights.json").open("r") as f:
-            self.series_weights = json.load(f)
-            self.series_weights = {
-                d["series_id"]: d["weight"] for d in self.series_weights
-            }
+        series_weights_path = pathlib.Path(
+            "./output/series_weights/series_weights.json"
+        )
+        if series_weights_path.exists():
+            with series_weights_path.open("r") as f:
+                self.series_weights = json.load(f)
+                self.series_weights = {
+                    d["series_id"]: d["weight"] for d in self.series_weights
+                }
 
     def __len__(self) -> int:
         return (
@@ -1209,7 +1226,7 @@ class SleepSegTrainDataset(Dataset):
         event = np.random.choice(["onset", "wakeup"], p=[0.5, 0.5])  # type: ignore
         pos = self.event_df.at[index, event]
         series_id = self.event_df.at[index, "series_id"]
-        series_weight = self.series_weights[series_id]
+        series_weight = self.series_weights.get(series_id, 1.0)
         this_event_row = self.event_df.query("series_id == @series_id")
         this_event_row = this_event_row.reset_index(drop=True)
         this_features = self.features[series_id]
@@ -1240,6 +1257,8 @@ class SleepSegTrainDataset(Dataset):
         label[:, [1, 2]] = gaussian_label(
             label[:, [1, 2]], self.cfg.offset, self.cfg.sigma
         )
+        if self.do_sleep_label_smoothing:
+            label = label_smoothing(label)
 
         return {
             "series_id": series_id,
@@ -1486,7 +1505,11 @@ def _init_train_dl(
         do_min_max_normalize=do_min_max_normalize,
     )
     ds = SleepSegTrainDataset(
-        cfg, train_event_df, train_features, sample_per_epoch=sample_per_epoch
+        cfg,
+        train_event_df,
+        train_features,
+        sample_per_epoch=sample_per_epoch,
+        do_sleep_label_smoothing=getattr(cfg, "do_sleep_label_smoothing", False),
     )
     dl = DataLoader(
         ds,

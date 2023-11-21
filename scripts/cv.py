@@ -99,11 +99,13 @@ for sid in submission["series_id"].unique():
         sub_sid,
     )
 
-min_score_sid = min(score_per_sid, key=score_per_sid.get)  # type: ignore
-max_score_sid = max(score_per_sid, key=score_per_sid.get)  # type: ignore
-print(f"min score sid: {min_score_sid}, score: {score_per_sid[min_score_sid]}")
-print(f"max score sid: {max_score_sid}, score: {score_per_sid[max_score_sid]}")
-less_than_07_sid = [sid for sid, score in score_per_sid.items() if score < 0.7]
+min_score_sid_ = min(score_per_sid, key=score_per_sid.get)  # type: ignore
+min_score_sid = (min_score_sid_, score_per_sid[min_score_sid_])
+max_score_sid_ = max(score_per_sid, key=score_per_sid.get)  # type: ignore
+max_score_sid = (max_score_sid_, score_per_sid[max_score_sid_])
+print(f"min score sid: {min_score_sid}, score: {score_per_sid[min_score_sid_]}")
+print(f"max score sid: {max_score_sid}, score: {score_per_sid[max_score_sid_]}")
+less_than_07_sid = [(sid, score) for sid, score in score_per_sid.items() if score < 0.7]
 
 print("\n score per sid")
 pprint.pprint(score_per_sid)
@@ -119,19 +121,20 @@ print(f"\n CV score: {cv_score}")
 ######## Analysis ########
 def _analysis(
     preds: pl.DataFrame,
-    sids: Sequence[str],
+    sids: Sequence[tuple[str, float]],
     save_dir: pathlib.Path,
     events_path: pathlib.Path,
     data_dir: pathlib.Path,
     use_features: Sequence[str],
+    fold: int = 0,
 ) -> None:
     events = _load_events(events_path)
-    for sid in sids:
+    for sid, score in sids:
         features = _load_features(data_dir, sid, use_features=use_features)
         events_this_sid = _filter_events(events, sid)
         preds_this_sid = _filter_events(preds, sid)
-        fig, _ = _plot_events(features, events_this_sid, preds_this_sid)
-        _save_fig(fig, f"events_{sid}.png", save_dir)
+        fig, _ = _plot_events(features, events_this_sid, preds_this_sid, score)
+        _save_fig(fig, f"fold{fold}_events_{sid}.png", save_dir)
 
 
 def _load_events(events_path: pathlib.Path) -> pl.DataFrame:
@@ -160,6 +163,7 @@ def _plot_events(
     features: pl.DataFrame,
     events: pl.DataFrame,
     preds: pl.DataFrame,
+    score: float,
     figsize: tuple[int, int] = (20, 10),
 ) -> tuple[figure.Figure, np.ndarray]:
     """plot features and events labels and preds for analysis
@@ -213,7 +217,7 @@ def _plot_events(
             )
 
     # -- Plot preds
-    for event_name, step, score in zip(preds["event"], preds["step"], preds["score"]):
+    for event_name, step, _ in zip(preds["event"], preds["step"], preds["score"]):
         color = "yellow" if event_name == "onset" else "aqua"
         for i in range(len(features.columns)):
             ax[i].axvline(
@@ -233,6 +237,8 @@ def _plot_events(
                 unique_handles_legends.append((handle, legend))
                 used_labels.add(legend)
         x.legend(*zip(*unique_handles_legends))
+
+    fig.suptitle(f"score: {score}")
     fig.tight_layout()
     return fig, ax
 
@@ -243,7 +249,7 @@ def _save_fig(fig: figure.Figure, save_path: str, save_dir: pathlib.Path) -> Non
     fig.savefig(save_path_)
 
 
-sids = [
+sids: list[tuple[str, float]] = [
     # "038441c925bb",
     # "fe90110788d2",
     min_score_sid,
@@ -251,7 +257,7 @@ sids = [
     *less_than_07_sid,
 ]
 print(f"{min_score_sid=}, {max_score_sid=}, {less_than_07_sid=}")
-for sid in sids:
+for sid, _ in sids:
     valid_sol_sid = df_valid_solution[df_valid_solution["series_id"] == sid]
     sub_sid = submission[submission["series_id"] == sid]
     print(
@@ -275,6 +281,7 @@ _analysis(
     events_path=config.train_events_path,
     data_dir=pathlib.Path("./input/processed"),
     use_features=["anglez", "enmo", "hour_cos", "hour_sin"],
+    fold=int(args.fold),
 )
 
 
