@@ -86,8 +86,8 @@ def train_one_epoch_v4(
             #     y_mix, lam = None, None
 
             if do_inverse_aug and np.random.rand() < 0.5:
-                X = X[:, :, ::-1]
-                y = y[:, ::-1, :]
+                X = torch.flip(X, dims=[2])
+                y = torch.flip(y, dims=[1])
 
             do_mixup = np.random.rand() < mixup_prob
             do_mixup_raw_signal = np.random.rand() < mixup_raw_signal_prob
@@ -266,6 +266,7 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
             mixup_raw_signal_prob=getattr(cfg, "mixup_raw_signal_prob", 0.0),
             cutmix_prob=getattr(cfg, "cutmix_prob", 0.0),
             do_sample_weights=getattr(cfg, "do_sample_weights", False),
+            do_inverse_aug=getattr(cfg, "do_inverse_aug", False),
         ),
         valid_one_epoch=partial(valid_one_epoch_v4),
         model_compile=model_compile,

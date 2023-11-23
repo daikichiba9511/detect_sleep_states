@@ -12,26 +12,25 @@ FEATURES_DIR = pathlib.Path("./input/processed")
 USE_FEATURES = ["anglez", "enmo", "hour_sin", "hour_cos"]
 pathlib.Path("./output/eda010").mkdir(parents=True, exist_ok=True)
 
-# target_series_id = "038441c925bb"
-target_series_id = "fe90110788d2"
+CORRECTED_EVENT_DF = pl.read_csv(FOR_TRAIN_DIR / "record_state.csv")
+print(CORRECTED_EVENT_DF)
 
-df = pl.read_csv(FOR_TRAIN_DIR / "record_state.csv")
-print(df)
-
-event_df = pl.read_csv(DATA_DIR / "train_events.csv")
-event_df = event_df.drop_nulls()
-print(event_df)
-
-features = {}
-for feature_path in (FEATURES_DIR / target_series_id).glob("*.npy"):
-    if feature_path.stem in USE_FEATURES:
-        features[feature_path.stem] = np.load(feature_path)
-feats_df = pl.DataFrame(features)
+EVENT_DF = pl.read_csv(DATA_DIR / "train_events.csv").drop_nulls()
+print(EVENT_DF)
 
 
 def plot(series_id):
-    target_event_df = event_df.filter(pl.col("series_id") == series_id)
-    target_df = df.filter(pl.col("series_id") == series_id).filter(pl.col("step") != 0)
+    target_event_df = EVENT_DF.filter(pl.col("series_id") == series_id)
+    target_df = CORRECTED_EVENT_DF.filter(pl.col("series_id") == series_id).filter(
+        pl.col("step") != 0
+    )
+
+    features = {}
+    for feature_path in (FEATURES_DIR / series_id).glob("*.npy"):
+        if feature_path.stem in USE_FEATURES:
+            features[feature_path.stem] = np.load(feature_path)
+    feats_df = pl.DataFrame(features)
+
     fig, ax = plt.subplots(len(feats_df.columns), 1, figsize=(20, 10))
     assert isinstance(ax, np.ndarray)
     assert isinstance(fig, figure.Figure)
@@ -40,6 +39,7 @@ def plot(series_id):
         a.plot(feats_df[feat])
         a.set_title(feat)
 
+    # Corrected Label
     for row_id in range(len(target_df)):
         row = target_df[row_id].to_dict(as_series=False)
         color = "red" if row["awake"][0] == 1 else "green"
@@ -47,13 +47,15 @@ def plot(series_id):
         for a in ax:
             a.axvline(row["step"], color=color, alpha=0.5, label=label)
 
-    for row_id in range(len(target_event_df)):
-        row = target_event_df[row_id].to_dict(as_series=False)
-        color = "yellow" if row["event"][0] == "onset" else "lightblue"
-        label = "awake_original" if row["event"][0] == "onset" else "sleep_original"
-        for a in ax:
-            a.axvline(row["step"], color=color, alpha=0.5, label=label)
+    # Original Label
+    # for row_id in range(len(target_event_df)):
+    #     row = target_event_df[row_id].to_dict(as_series=False)
+    #     color = "yellow" if row["event"][0] == "onset" else "lightblue"
+    #     label = "awake_original" if row["event"][0] == "onset" else "sleep_original"
+    #     for a in ax:
+    #         a.axvline(row["step"], color=color, alpha=0.5, label=label)
 
+    # Unique legend
     for x in ax:
         handles, legends = x.get_legend_handles_labels()
         used_labels = set()
@@ -70,6 +72,9 @@ def plot(series_id):
     plt.close("all")
 
 
-for series_id in df["series_id"].unique():
+# target_series_id = "038441c925bb"
+# target_series_id = "fe90110788d2"
+
+for series_id in CORRECTED_EVENT_DF["series_id"].unique():
     print(series_id)
     plot(series_id)

@@ -180,5 +180,39 @@ def post_process_for_seg(
     return sub_df
 
 
+def transformed_record_state(record_state: pl.DataFrame) -> pl.DataFrame:
+    # cleasing
+    before_len = len(record_state)
+    print("Before cleasing:", before_len)
+    record_state = record_state.filter(pl.col("step") != 0)
+    print(
+        "After cleasing:",
+        len(record_state),
+        ": the number of rows are reduced by",
+        before_len - len(record_state),
+    )
+
+    record_state = record_state.select(
+        pl.col("series_id"),
+        pl.col("night"),
+        pl.when(pl.col("awake") == 1)
+        .then(pl.lit("wakeup"))
+        .otherwise(pl.lit("onset"))
+        .alias("event"),
+        pl.col("step"),
+        pl.col("timestamp"),
+    )
+
+    dfs = []
+    for series_id, series_df in record_state.groupby("series_id"):
+        series_df = series_df.with_columns(
+            pl.Series("night", np.arange(len(series_df)) // 2 + 1)
+        )
+        dfs.append(series_df)
+    df = pl.concat(dfs).sort(by=["series_id", "night"])
+
+    return df
+
+
 if __name__ == "__main__":
     print(get_commit_head_hash())

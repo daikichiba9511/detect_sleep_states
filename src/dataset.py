@@ -1190,8 +1190,15 @@ class SleepSegTrainDataset(Dataset):
         do_sleep_label_smoothing: bool = False,
     ) -> None:
         self.cfg = cfg
+
         self.event_df = (
-            df.pivot(index=["series_id", "night"], columns="event", values="step")
+            # TODO: nightに重複があってここでエラーでるので、aggregate_function="min"で対応してる<=>完全に活用できてるわけじゃない
+            df.pivot(
+                index=["series_id", "night"],
+                columns="event",
+                values="step",
+                aggregate_function="min",
+            )
             .drop_nulls()
             .to_pandas(use_pyarrow_extension_array=True)
         )
@@ -1293,7 +1300,12 @@ class SleepSegValidDataset(Dataset):
         self.chunk_features = chunk_features
         self.keys = list(chunk_features.keys())
         self.event_df = (
-            df.pivot(index=["series_id", "night"], columns="event", values="step")
+            df.pivot(
+                index=["series_id", "night"],
+                columns="event",
+                values="step",
+                aggregate_function="min",
+            )
             .drop_nulls()
             .to_pandas(use_pyarrow_extension_array=True)
         )
@@ -1454,9 +1466,13 @@ def _init_valid_dl(
     features: list[str],
     num_workers: int,
     seed: int,
-    do_min_max_normalize: bool = True,
+    do_min_max_normalize: bool = False,
+    use_corrected_events: bool = False,
 ) -> DataLoader:
-    event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
+    if use_corrected_events:
+        event_df = pl.read_csv(data_dir / "train_events_corrected.csv").drop_nulls()
+    else:
+        event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
     valid_event_df = event_df.filter(pl.col("series_id").is_in(valid_series))
     valid_chunk_features = load_chunk_features(
         seq_len=seq_len,
@@ -1493,9 +1509,13 @@ def _init_train_dl(
     num_workers: int,
     seed: int,
     sample_per_epoch: int | None = None,
-    do_min_max_normalize: bool = True,
+    do_min_max_normalize: bool = False,
+    use_corrected_events: bool = False,
 ) -> DataLoader:
-    event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
+    if use_corrected_events:
+        event_df = pl.read_csv(data_dir / "train_events_corrected.csv").drop_nulls()
+    else:
+        event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
     train_event_df = event_df.filter(pl.col("series_id").is_in(train_series))
     train_features = load_features(
         feature_names=features,
@@ -1552,6 +1572,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
             data_dir=cfg.data_dir,
             processed_dir=cfg.processed_dir,
             do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
+            use_corrected_events=getattr(cfg, "use_corrected_events", False),
         )
 
     # Train
@@ -1568,6 +1589,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
         processed_dir=cfg.processed_dir,
         sample_per_epoch=cfg.sample_per_epoch,
         do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
+        use_corrected_events=getattr(cfg, "use_corrected_events", False),
     )
 
 
