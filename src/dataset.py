@@ -1091,25 +1091,27 @@ def random_crop(pos: int, duration: int, max_end: int) -> tuple[int, int]:
 def make_label(
     this_event_df: pd.DataFrame, num_frames: int, duration: int, start: int, end: int
 ) -> np.ndarray:
+    def _make_pos_on_num_frames(pos: int, num_frames: int, start: int) -> int:
+        relatiev_pos = (pos - start) / duration
+        return int(relatiev_pos * num_frames)
+
     this_event_df = this_event_df.query("@start <= wakeup & onset <= @end")
 
     label = np.zeros((num_frames, 3))
     for onset, wakeup in this_event_df[["onset", "wakeup"]].to_numpy():
         # make relative position in the num_frames
-        onset = int((onset - start) / duration * num_frames)
-        wakeup = int((wakeup - start) / duration * num_frames)
-        if 0 <= onset < num_frames:
-            label[onset, 1] = 1
-        if 0 <= wakeup < num_frames:
-            label[wakeup, 2] = 1
+        onset_pos_on_num_frames = _make_pos_on_num_frames(onset, num_frames, start)
+        if 0 <= onset_pos_on_num_frames < num_frames:
+            label[onset_pos_on_num_frames, 1] = 1
 
-        onset = max(0, onset)
-        wakeup = min(num_frames, wakeup)
-        label[onset:wakeup, 0] = 1  # 0: sleep
+        wakeup_pos_on_num_frames = _make_pos_on_num_frames(wakeup, num_frames, start)
+        if 0 <= wakeup_pos_on_num_frames < num_frames:
+            label[wakeup_pos_on_num_frames, 2] = 1
 
-        # wakeup
-        # label[:onset, 4] = 1
-        # label[wakeup:, 4] = 1
+        # make sleep label (class 0)
+        onset_pos_on_num_frames = max(0, onset_pos_on_num_frames)
+        wakeup_pos_on_num_frames = min(num_frames, wakeup_pos_on_num_frames)
+        label[onset_pos_on_num_frames:wakeup_pos_on_num_frames, 0] = 1
 
     return label
 
@@ -1135,6 +1137,15 @@ def gaussian_label(label: np.ndarray, offset: int, sigma: int) -> np.ndarray:
 
 
 def negative_sampling(this_event_df: pd.DataFrame, num_steps: int) -> int:
+    """num_stepsの中から、this_event_dfのonset, wakeupとかぶらないようにランダムにサンプリングする
+
+    Args:
+        this_event_df: (num_events, 2)
+        num_steps: int
+
+    Returns:
+        int: negative position
+    """
     pos_positions = set(
         this_event_df[["onset", "wakeup"]].to_numpy().flatten().tolist()
     )
@@ -1202,6 +1213,19 @@ class SleepSegTrainDataset(Dataset):
             .drop_nulls()
             .to_pandas(use_pyarrow_extension_array=True)
         )
+
+        # the form of event_df is following
+        #
+        # | series_id | night | onset | wakeup |
+        # |-----------|-------|-------|--------|
+        # | 03d55.... | 1     | 1000  | 5000   |
+        # | ...       | ...   | ...   | ...    |
+        #
+        self.seires_event_df_map = {
+            series_id: series_df
+            for series_id, series_df in self.event_df.groupby("series_id")
+        }
+
         self.features = features
         self.num_features = len(cfg.features)
         self.upsampled_num_frames = nearest_valid_size(
@@ -1229,22 +1253,37 @@ class SleepSegTrainDataset(Dataset):
             else self.sample_per_epoch
         )
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor | str | float]:
         event = np.random.choice(["onset", "wakeup"], p=[0.5, 0.5])  # type: ignore
-        pos = self.event_df.at[index, event]
-        series_id = self.event_df.at[index, "series_id"]
+        # the form of event_df is following
+        #
+        # | series_id | night | onset | wakeup |
+        # |-----------|-------|-------|--------|
+        # | 03d55.... | 1     | 1000  | 5000   |
+        # | ...       | ...   | ...   | ...    |
+        #
+        event_df = self.event_df
+        step = event_df.at[index, event]
+        if pd.isna(step):
+            other_event = "wakeup" if event == "onset" else "onset"
+            step = event_df.at[index, other_event]
+
+        series_id = event_df.at[index, "series_id"]
+
+        # series_df = event_df.query("series_id == @series_id").reset_index(drop=True)
+        series_df = self.seires_event_df_map[series_id].reset_index(drop=True)
+
+        this_series_features = self.features[series_id]
+        n_steps = len(this_series_features)
+
         series_weight = self.series_weights.get(series_id, 1.0)
-        this_event_row = self.event_df.query("series_id == @series_id")
-        this_event_row = this_event_row.reset_index(drop=True)
-        this_features = self.features[series_id]
-        n_steps = len(this_features)
 
         if random.random() < self.bg_sampling_rate:
-            pos = negative_sampling(this_event_row, n_steps)
+            step = negative_sampling(series_df, n_steps)
 
         # crop
-        start, end = random_crop(pos, self.cfg.seq_len, n_steps)
-        feature = this_features[start:end]  # (seq_len, num_features)
+        start, end = random_crop(step, self.cfg.seq_len, n_steps)
+        feature = this_series_features[start:end]  # (seq_len, num_features)
 
         # upsample seq_len to upsampled_num_frames
         # (1, num_features, seq_len)
@@ -1259,13 +1298,13 @@ class SleepSegTrainDataset(Dataset):
         # hard label to gaussian label
         # lengthをdownsamplingする
         num_frames = self.upsampled_num_frames // self.cfg.downsample_rate
-        label = make_label(this_event_row, num_frames, self.cfg.seq_len, start, end)
+        label = make_label(series_df, num_frames, self.cfg.seq_len, start, end)
         label = label.astype(np.float32)
         label[:, [1, 2]] = gaussian_label(
             label[:, [1, 2]], self.cfg.offset, self.cfg.sigma
         )
         if self.do_sleep_label_smoothing:
-            label = label_smoothing(label)
+            label = label_smoothing(label, eps=0.1)
 
         return {
             "series_id": series_id,

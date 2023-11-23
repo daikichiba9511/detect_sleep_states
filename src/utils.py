@@ -203,15 +203,15 @@ def transformed_record_state(record_state: pl.DataFrame) -> pl.DataFrame:
         pl.col("timestamp"),
     )
 
-    dfs = []
-    for series_id, series_df in record_state.groupby("series_id"):
-        series_df = series_df.with_columns(
-            pl.Series("night", np.arange(len(series_df)) // 2 + 1)
-        )
-        dfs.append(series_df)
-    df = pl.concat(dfs).sort(by=["series_id", "night"])
+    # dfs = []
+    # for series_id, series_df in record_state.groupby("series_id"):
+    #     series_df = series_df.with_columns(
+    #         pl.Series("night", np.arange(len(series_df)) // 2 + 1)
+    #     )
+    #     dfs.append(series_df)
+    # df = pl.concat(dfs).sort(by=["series_id", "night"])
 
-    return df
+    return record_state
 
 
 if __name__ == "__main__":
