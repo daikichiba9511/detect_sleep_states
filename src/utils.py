@@ -10,8 +10,10 @@ from datetime import datetime, timedelta
 from functools import wraps
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
 from typing import Any, ClassVar, Sequence
+from tqdm.auto import tqdm
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import psutil
 import torch
@@ -169,7 +171,12 @@ def post_process_for_seg(
 
     if not records:
         records.append(
-            {"series_id": 0, "event": "onset", "step": 0, "score": 0.0},
+            {
+                "series_id": unique_series_ids[0],
+                "event": "onset",
+                "step": 0,
+                "score": 0.0,
+            },
         )
 
     sub_df = pl.DataFrame(records).sort(by=["series_id", "step"])
@@ -191,12 +198,17 @@ def transformed_record_state(record_state: pl.DataFrame) -> pl.DataFrame:
         ": the number of rows are reduced by",
         before_len - len(record_state),
     )
+    print("**********Cleansed")
+    print(record_state)
 
+    print("**********Transformed")
     record_state = record_state.select(
         pl.col("series_id"),
         pl.col("night"),
         pl.when(pl.col("awake") == 1)
         .then(pl.lit("wakeup"))
+        .when(pl.col("periodic") == 1)
+        .then(pl.lit("periodic"))
         .otherwise(pl.lit("onset"))
         .alias("event"),
         pl.col("step"),
@@ -212,6 +224,111 @@ def transformed_record_state(record_state: pl.DataFrame) -> pl.DataFrame:
     # df = pl.concat(dfs).sort(by=["series_id", "night"])
 
     return record_state
+
+
+def replace_nonconsecutive_true_with_false(arr: np.ndarray) -> np.ndarray:
+    """連続していないTrueをFalseに置き換える
+
+    References:
+    [1] https://www.kaggle.com/code/welshonionman/cmi-submit-edc250?scriptVersionId=151848507
+    """
+    arr_copy = arr.copy()
+
+    # 最初の要素がTrueで、2番目の要素がFalseのとき、最初の要素をFalseにする
+    if arr[0] and not arr[1]:
+        arr_copy[0] = False
+
+    # i-1とi+1がFalseのとき、iをFalseにする
+    for i in range(1, len(arr) - 1):
+        if not arr[i - 1] and not arr[i + 1]:
+            arr_copy[i] = False
+
+    # 最後の要素がTrueで、最後から2番目の要素がFalseのとき、最後の要素をFalseにする
+    if arr[-1] and not arr[-2]:
+        arr_copy[-1] = False
+
+    return arr_copy
+
+
+def exclude_periodic_feature(features: np.ndarray) -> np.ndarray:
+    """周期的な特徴量を除外する
+
+    Args:
+        features: (n_timesteps, n_features)
+
+    Returns:
+        periodic_pos: (num_periodic_steps, )
+
+    References:
+    [1] https://www.kaggle.com/code/welshonionman/cmi-submit-edc250?scriptVersionId=151848507
+    """
+    # 17280 = 24 * 60 * 12 step/min
+    days = (len(features) - 1) // 17280
+
+    periodic = np.zeros((features.shape[0], 1))
+    dummy = np.full_like(features, 10)
+    for day in range(1, days + 1):
+        shift_step = 17280 * day
+        forward_shift = np.concatenate((dummy[-shift_step:], features[:-shift_step]))
+        backward_shift = np.concatenate((features[shift_step:], dummy[:shift_step]))
+
+        match_forward = np.all(forward_shift == features, axis=1)
+        match_backward = np.all(backward_shift == features, axis=1)
+        match_cond = np.expand_dims(np.logical_or(match_forward, match_backward), 1)
+        periodic = np.logical_or(periodic, match_cond)
+
+    periodic = replace_nonconsecutive_true_with_false(periodic).reshape(-1)
+    periodic_pos = np.where(periodic)[0]
+    return periodic_pos
+
+
+def create_periodic_dict(series: pd.DataFrame) -> dict[str, np.ndarray]:
+    """各series_idの周期的な部分を特定する
+
+    Args:
+        series: series_id, timestamp, anglez, enmo
+
+    Returns:
+        periodic_dict: series_idをキーとし、周期的な部分のstepを値とする辞書
+
+    References:
+    [1] https://www.kaggle.com/code/welshonionman/cmi-submit-edc250?scriptVersionId=151848507
+    """
+
+    series_ids = tqdm(series["series_id"].unique().tolist())
+    periodic_dict = {}
+    for series_id in series_ids:
+        train_each_seriesid = series.query("series_id == @series_id")
+        train_each_seriesid["date_time"] = pd.to_datetime(
+            train_each_seriesid["timestamp"], utc=True
+        )
+        features = train_each_seriesid[["anglez", "enmo"]].to_numpy()
+        periodic = exclude_periodic_feature(features)
+        periodic_dict[series_id] = periodic
+    return periodic_dict
+
+
+def remove_periodic(
+    df: pd.DataFrame, periodic_dict: dict[str, np.ndarray]
+) -> pd.DataFrame:
+    """周期的な部分に該当する行を削除する
+
+    References:
+    [1] https://www.kaggle.com/code/welshonionman/cmi-submit-edc250?scriptVersionId=151848507
+    """
+    df_ = df.copy()
+    df_["periodic"] = 0
+
+    series_ids = sorted(df_["series_id"].unique().tolist())
+    for series_id in series_ids:
+        this_seriesid_df = df_.query("series_id == @series_id")
+
+        for index, step in zip(this_seriesid_df.index, this_seriesid_df["step"]):
+            if step in periodic_dict[series_id]:
+                df_.loc[index, "periodic"] = 1
+
+    df_ = df_.query("periodic == 0").drop("periodic", axis=1)
+    return df_
 
 
 if __name__ == "__main__":

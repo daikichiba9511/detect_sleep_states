@@ -16,8 +16,12 @@ from tqdm.auto import tqdm
 
 from src import utils as my_utils
 from src.fe import make_sequence_chunks
+from logging import getLogger
 
 pl.Config.set_tbl_cols(n=300)
+
+
+logger = getLogger(__name__)
 
 
 class SleepDataset(Dataset):
@@ -1173,6 +1177,23 @@ def nearest_valid_size(input_size: int, downsample_factor: int) -> int:
     return input_size
 
 
+def make_periodic_mask(
+    periodic_steps: np.ndarray, start: int, end: int, seq_len: int
+) -> np.ndarray:
+    """周期的なステップを指すマスクを作成する
+
+    Args:
+        periodic_steps: (periodic_steps, )
+        start:
+        end:
+        seq_len: int
+    """
+    mask_step = [step - start for step in periodic_steps if start <= step <= end]
+    mask = np.zeros(seq_len)
+    mask[mask_step] = 1
+    return mask
+
+
 class TrainSegDatasetConfig(Protocol):
     data_dir: pathlib.Path
     processed_dir: pathlib.Path
@@ -1198,6 +1219,7 @@ class SleepSegTrainDataset(Dataset):
         df: pl.DataFrame,
         features: dict[str, np.ndarray],
         sample_per_epoch: int | None,
+        train_periodic_dict: dict[str, np.ndarray] | None = None,
         do_sleep_label_smoothing: bool = False,
     ) -> None:
         self.cfg = cfg
@@ -1234,6 +1256,8 @@ class SleepSegTrainDataset(Dataset):
         self.sample_per_epoch = sample_per_epoch
         self.bg_sampling_rate = cfg.bg_sampling_rate
         self.do_sleep_label_smoothing = do_sleep_label_smoothing
+
+        self.train_periodic_dict = train_periodic_dict
 
         # exp053
         series_weights_path = pathlib.Path(
@@ -1306,11 +1330,19 @@ class SleepSegTrainDataset(Dataset):
         if self.do_sleep_label_smoothing:
             label = label_smoothing(label, eps=0.1)
 
+        if self.train_periodic_dict is not None:
+            periodic = self.train_periodic_dict[series_id]
+            periodic_mask = make_periodic_mask(periodic, start, end, self.cfg.seq_len)
+            periodic_mask = torch.FloatTensor(periodic_mask)
+        else:
+            periodic_mask = torch.zeros(self.cfg.seq_len)
+
         return {
             "series_id": series_id,
             "feature": feature,  # (num_features, upsampled_num_frames)
             "label": torch.FloatTensor(label),  # (num_frames, 3) (2880, 3)
             "weight": series_weight,
+            "periodic_mask": periodic_mask,
         }
 
 
@@ -1509,6 +1541,7 @@ def _init_valid_dl(
     use_corrected_events: bool = False,
 ) -> DataLoader:
     if use_corrected_events:
+        logger.info("Use Corrected Events")
         event_df = pl.read_csv(data_dir / "train_events_corrected.csv").drop_nulls()
     else:
         event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
@@ -1550,12 +1583,27 @@ def _init_train_dl(
     sample_per_epoch: int | None = None,
     do_min_max_normalize: bool = False,
     use_corrected_events: bool = False,
+    use_periodic_dict: bool = False,
 ) -> DataLoader:
     if use_corrected_events:
+        logger.info("Use Corrected Events")
         event_df = pl.read_csv(data_dir / "train_events_corrected.csv").drop_nulls()
     else:
         event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
+
     train_event_df = event_df.filter(pl.col("series_id").is_in(train_series))
+
+    if use_periodic_dict:
+        logger.info("Use periodic dict")
+        train_series_df = (
+            pl.read_csv(data_dir / "train_series.parquet")
+            .filter(pl.col("series_id").is_in(train_series))
+            .drop_nulls()
+        ).to_pandas(use_pyarrow_extension_array=True)
+        train_periodic_dict = my_utils.create_periodic_dict(train_series_df)
+    else:
+        train_periodic_dict = None
+
     train_features = load_features(
         feature_names=features,
         series_ids=train_series,
@@ -1569,6 +1617,7 @@ def _init_train_dl(
         train_features,
         sample_per_epoch=sample_per_epoch,
         do_sleep_label_smoothing=getattr(cfg, "do_sleep_label_smoothing", False),
+        train_periodic_dict=train_periodic_dict,
     )
     dl = DataLoader(
         ds,
@@ -2186,5 +2235,11 @@ if __name__ == "__main__":
     # test_build_dl()
     # test_build_dl_v2()
     # test_build_dl_v3()
-    test_build_dl_v4()
+    # test_build_dl_v4()
     # _test_load_chunk_features()
+    import numpy as np
+
+    mask = make_periodic_mask(
+        np.array([110, 111, 112, 113, 125, 126, 127]), 100, 120, 20
+    )
+    print(mask)

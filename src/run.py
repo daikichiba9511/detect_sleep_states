@@ -131,6 +131,8 @@ class Runner:
         logger.info("Debug mode: %s", debug)
         if self.is_val:
             # dl = build_dataloader_v3(self.dataconfig, fold, "valid", debug)
+            self.dataconfig.use_corrected_events = False
+            print(my_utils.get_class_vars(self.dataconfig))
             dl = dataset.init_dataloader("valid", self.dataconfig)
             return dl
         else:
@@ -145,150 +147,6 @@ class Runner:
         print(model.load_state_dict(state_dict))
         model = model.to(self.device).eval()
         return model
-
-    def _make_pred_v3(
-        self,
-        model: nn.Module,
-        batch: tuple[torch.Tensor, torch.Tensor, list[str], torch.Tensor],
-        chunk_size: int,
-    ) -> torch.Tensor:
-        device = self.device
-        # (BS, seq_len, n_features)
-        X = batch[0].to(device, non_blocking=True)
-        pred = torch.zeros(*X.shape[:2], 2).to(device, non_blocking=True)
-        seq_len = X.shape[1]
-        # Window sliding inference
-        h = None
-        for i in range(0, seq_len, chunk_size):
-            ch_s = i
-            ch_e = min(pred.shape[1], i + chunk_size)
-            x_chunk = X[:, ch_s:ch_e, :].to(device, non_blocking=True)
-            # logits = model(x_chunk, None, None)
-            # logits, h = model(x_chunk, None)  # MultiResidualRNN
-            logits, h = model(x_chunk, h)  # MultiResidualRNN
-            h = [h_.detach() for h_ in h]
-            pred[:, ch_s:ch_e] = logits.detach()
-        return pred
-
-    def _make_sub_v3(
-        self,
-        models: list[nn.Module],
-        dl: DataLoader,
-        criterion: Callable | None,
-        losses: AverageMeter | None,
-        # -- Additional params
-        chunk_size: int,
-        min_interval: int = 30,
-    ) -> dict[str, np.ndarray | float | pd.DataFrame]:
-        print("Infer ChunkSize => ", chunk_size)
-        pbar = tqdm(enumerate(dl), total=len(dl), dynamic_ncols=True, leave=True)
-        onset_losses = AverageMeter("onset_loss")
-        wakeup_losses = AverageMeter("wakeup_loss")
-        total_sub = pd.DataFrame()
-        for i, batch in pbar:
-            with torch.inference_mode():
-                # (BS, seq_len, 2)
-                sid = batch[2]
-                pred = []
-                for i, model in enumerate(models):
-                    if isinstance(model, SleepTransformer):
-                        pred_ = _infer_for_transformer(model, batch[0], self.device)
-
-                    else:
-                        pred_ = self._make_pred_v3(model, batch, chunk_size)
-                    pred.append(pred_.detach().cpu().float())
-
-                pred = torch.concat(pred)
-                pred = pred.mean(0).unsqueeze(0)
-
-                if criterion is not None and losses is not None:
-                    normalized_pred = mean_std_normalize_label(pred)
-                    y = batch[1].to(normalized_pred.device, non_blocking=True)
-                    loss = criterion(normalized_pred, y)
-                    loss_onset = (
-                        criterion(normalized_pred[..., 0], y[..., 0]).detach().cpu()
-                    )
-                    if not torch.isnan(loss_onset):
-                        onset_losses.update(loss_onset.item())
-
-                    loss_wakeup = (
-                        criterion(normalized_pred[..., 1], y[..., 1]).detach().cpu()
-                    )
-                    if not torch.isnan(loss_wakeup):
-                        wakeup_losses.update(loss_wakeup.item())
-
-                    losses.update(loss.item())
-                    pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
-
-                # (BS, seq_len, 2) -> (seq_len, 2)
-                pred = pred.detach().cpu().float().numpy().reshape(-1, 2)
-                days = len(pred) // (17280 / 12)
-
-                # Make scores of onset/wakeup
-                # idxから前後min_intervalの中で最大の値を取る
-                # これがidxの値と同じならば、そのidxはonset/wakeupの候補となる
-                # len(pred) // (17280 / 12) で、predの長さを日数に変換
-                score_onset = np.zeros(len(pred), np.float32)
-                score_wakeup = np.zeros(len(pred), np.float32)
-                for idx in range(len(pred)):
-                    p_onset = pred[idx, 0]
-                    p_wakeup = pred[idx, 1]
-
-                    max_p_interval_onset = max(
-                        pred[max(0, idx - min_interval) : idx + min_interval, 0]
-                    )
-                    max_p_interval_wakeup = max(
-                        pred[max(0, idx - min_interval) : idx + min_interval, 1]
-                    )
-                    if p_onset == max_p_interval_onset:
-                        score_onset[idx] = p_onset
-                    if p_wakeup == max_p_interval_wakeup:
-                        score_wakeup[idx] = p_wakeup
-
-                # Select event(onset/wakeup) step index
-                candidates_onset = np.argsort(score_onset)[-max(1, round(days)) :]
-                candidates_wakeup = np.argsort(score_wakeup)[-max(1, round(days)) :]
-
-                step = pd.DataFrame(dict(step=batch[3].numpy().reshape(-1)))
-
-                # Make onset
-                # 1 sample per minite
-                downsample_factor = 12
-                onset = step.iloc[
-                    np.clip(candidates_onset * downsample_factor, 0, len(step) - 1)
-                ].astype(np.int32)
-                if isinstance(onset, pd.Series):
-                    onset = onset.to_frame().T
-                onset["event"] = "onset"
-                onset["score"] = score_onset[candidates_onset]
-                onset["series_id"] = sid[0]
-
-                # Make wakeup
-                wakeup = step.iloc[
-                    np.clip(candidates_wakeup * downsample_factor, 0, len(step) - 1)
-                ].astype(np.int32)
-                if isinstance(wakeup, pd.Series):
-                    wakeup = wakeup.to_frame().T
-                wakeup["event"] = "wakeup"
-                wakeup["score"] = score_wakeup[candidates_wakeup]
-                wakeup["series_id"] = sid[0]
-
-                total_sub = pd.concat([total_sub, onset, wakeup], axis=0)
-
-        total_sub = total_sub.sort_values(["series_id", "step"]).reset_index(drop=True)
-        total_sub["row_id"] = total_sub.index.astype(int)
-        total_sub["score"] = total_sub["score"].fillna(total_sub["score"].mean())
-        total_sub = total_sub[["row_id", "series_id", "step", "event", "score"]]
-        submission = total_sub[["row_id", "series_id", "step", "event", "score"]]
-
-        outputs = {}
-        outputs["submission"] = submission
-        if self.is_val and losses is not None:
-            outputs["loss"] = losses.avg
-            outputs["onset_loss"] = onset_losses.avg
-            outputs["wakeup_loss"] = wakeup_losses.avg
-
-        return outputs
 
     def _make_sub_for_seg(
         self,

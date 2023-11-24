@@ -57,7 +57,17 @@
 # make train3 CONFIG=exp048 # 0/5folds
 
 # min_max_norm on anglez
-make train3 CONFIG=exp052 FOLD=0
-make train3 CONFIG=exp052 FOLD=1
-make train3 CONFIG=exp052_1 FOLD=0
-make train3 CONFIG=exp052_1 FOLD=1
+# make train3 CONFIG=exp052 FOLD=0
+# make train3 CONFIG=exp052 FOLD=1
+# make train3 CONFIG=exp052_1 FOLD=0
+# make train3 CONFIG=exp052_1 FOLD=1
+
+# exp067: 063+use_corrected_events=True, 1.6h * 3 = 4.8h
+make train3 CONFIG=exp067 FOLD=1
+make train3 CONFIG=exp067 FOLD=2
+make train3 CONFIG=exp067 FOLD=3
+
+# exp068: 064+use_corrected_events=False, 6.0h * 3 = 18.0h
+make train3 CONFIG=exp068 FOLD=0
+make train3 CONFIG=exp068 FOLD=1
+make train3 CONFIG=exp068 FOLD=2

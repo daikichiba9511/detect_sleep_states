@@ -88,6 +88,9 @@ def train_one_epoch_v4(
             if do_inverse_aug and np.random.rand() < 0.5:
                 X = torch.flip(X, dims=[2])
                 y = torch.flip(y, dims=[1])
+                # original: dense->sparse(onset), sparse->dense(wakeup)
+                # inverse: dense->sparse(wakeup), sparse->dense(onset)
+                y = y[:, :, [0, 2, 1]]
 
             do_mixup = np.random.rand() < mixup_prob
             do_mixup_raw_signal = np.random.rand() < mixup_raw_signal_prob

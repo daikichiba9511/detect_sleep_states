@@ -37,9 +37,10 @@ print(
         index=["series_id", "night"],
         columns="event",
         values="step",
-        aggregate_function="min",
+        # aggregate_function="max",
+        aggregate_function=None,
     )
-    .drop_nulls()
+    # .drop_nulls()
     .to_pandas(use_pyarrow_extension_array=True)
 )
 raise Exception
