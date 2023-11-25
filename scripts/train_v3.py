@@ -78,6 +78,8 @@ def train_one_epoch_v4(
             else:
                 sample_weights = None
 
+            periodic_mask = batch["periodic_mask"].to(device, non_blocking=True)
+
             # mixed = False
             # if np.random.rand() < 0.5:
             #     X, y, y_mix, lam = mixup(X, y)
@@ -102,6 +104,7 @@ def train_one_epoch_v4(
                 do_cutmix=do_cutmix,
                 do_mixup_raw_signal=do_mixup_raw_signal,
                 sample_weights=sample_weights,
+                periodic_mask=periodic_mask,
             )  # Spectrogram2DCNN
             loss = out["loss"]
 

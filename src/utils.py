@@ -299,9 +299,9 @@ def create_periodic_dict(series: pd.DataFrame) -> dict[str, np.ndarray]:
     periodic_dict = {}
     for series_id in series_ids:
         train_each_seriesid = series.query("series_id == @series_id")
-        train_each_seriesid["date_time"] = pd.to_datetime(
-            train_each_seriesid["timestamp"], utc=True
-        )
+        # train_each_seriesid.loc[:, "date_time"] = pd.to_datetime(
+        #     train_each_seriesid["timestamp"], utc=True
+        # )
         features = train_each_seriesid[["anglez", "enmo"]].to_numpy()
         periodic = exclude_periodic_feature(features)
         periodic_dict[series_id] = periodic

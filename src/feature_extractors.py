@@ -2,6 +2,66 @@ from typing import Callable
 
 import torch
 import torch.nn as nn
+import torchaudio.transforms as TAT
+
+
+class SpecNormalize(nn.Module):
+    def __init__(self, eps: float = 1e-8) -> None:
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalize spectrogram.
+
+        Args:
+            x (torch.Tensor): (batch_size, in_channels, height=freq, width)
+
+        Returns:
+            torch.Tensor: (batch_size, in_channels, height, width)
+
+        References:
+        [1]
+        https://github.com/tubo213/kaggle-child-mind-institute-detect-sleep-states/blob/main/src/models/feature_extractor/spectrogram.py
+        """
+        min_ = x.min(dim=-1, keepdim=True)[0].min(dim=-2, keepdim=True)[0]
+        max_ = x.max(dim=-1, keepdim=True)[0].max(dim=-2, keepdim=True)[0]
+        return (x - min_) / (max_ - min_ + self.eps)
+
+
+class SpecFeatureExtractor(nn.Module):
+    """Spectrogram feature extractor.
+
+    References:
+    [1]
+    https://github.com/tubo213/kaggle-child-mind-institute-detect-sleep-states/blob/main/src/models/feature_extractor/spectrogram.py
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        height: int,
+        hop_length: int,
+        win_length: int | None = None,
+        out_size: int | None = None,
+    ) -> None:
+        super().__init__()
+        self.height = height
+        self.out_chans = in_channels
+        n_fft = (2 * height) - 1
+        self.feature_extractor = nn.Sequential(
+            TAT.Spectrogram(n_fft=n_fft, hop_length=hop_length, win_length=win_length),
+            TAT.AmplitudeToDB(top_db=80),
+            SpecNormalize(),
+        )
+        self.out_size = out_size
+        if self.out_size is not None:
+            self.pool = nn.AdaptiveAvgPool2d((None, self.out_size))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        img = self.feature_extractor(x)
+        if self.out_size is not None:
+            img = self.pool(img)
+        return img
 
 
 class CNNSpectgram(nn.Module):
@@ -101,3 +161,37 @@ class CNNSpectgram(nn.Module):
         if self.sigmoid:
             img = torch.sigmoid(img)
         return img
+
+
+def _test_spec_feature_extractor() -> None:
+    batch_size = 2
+    in_channels = 3
+    height = 64
+    win_length = 32
+    hop_length = 256
+    # out_size = 64 * 2
+    out_size = 24 * 60 * 4 // 2
+
+    num_features = 4
+    seq_len = 24 * 60 * 4
+
+    x = torch.randn(batch_size, num_features, seq_len)
+    model = SpecFeatureExtractor(
+        in_channels=in_channels,
+        height=height,
+        hop_length=hop_length,
+        win_length=win_length,
+        out_size=out_size,
+    )
+    out = model(x)
+    print(f"{out.shape=}")
+    assert out.shape == (
+        batch_size,
+        num_features,
+        height,
+        out_size,
+    ), f"{out.shape=} != {(batch_size, num_features, height, out_size)}"
+
+
+if __name__ == "__main__":
+    _test_spec_feature_extractor()

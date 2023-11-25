@@ -136,3 +136,7 @@ def made_spec_augment_func(
         TAT.TimeMasking(time_mask_param=time_mask_param),
         TAT.FrequencyMasking(freq_mask_param=freq_mask_param),
     )
+
+
+def make_aug_on_waveform() -> nn.Sequential:
+    return nn.Sequential()

@@ -14,6 +14,7 @@ from matplotlib import axes, figure
 from src import metrics
 from src.run import Runner
 from src.utils import LoggingUtils, get_class_vars
+from src import utils as my_utils
 
 logger = LoggingUtils.get_stream_logger(20)
 
@@ -77,6 +78,18 @@ submission = Runner(
     debug=args.debug,
     fold=args.fold,
 )
+
+########## 周期的な部分の予測の除外 ##########
+# logger.info("remove periodic")
+# valid_series = configs[args.fold].valid_series
+# valid_series = (
+#     pl.read_parquet(config.data_dir / "train_series.parquet")
+#     .filter(pl.col("series_id").is_in(valid_series))
+#     .to_pandas(use_pyarrow_extension_array=True)
+# )
+# valid_periodic_dict = my_utils.create_periodic_dict(valid_series)
+# submission = my_utils.remove_periodic(submission, valid_periodic_dict)
+
 print(submission)
 submission.to_csv("submission.csv", index=False)
 

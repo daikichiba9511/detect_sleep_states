@@ -6,10 +6,12 @@ from src import utils
 
 
 class Config:
-    name: str = "exp066"
+    name: str = "exp066_1"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    63+do_inverse_aug=True+dropout=0.1
+    63+do_inverse_aug=True+dropout=0.1+onset_wakeup_label_swap
+
+    元の66だとlabelのswapしてなかったのでモデル的にはonset/wakeupが逆に見えてる
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -86,6 +88,7 @@ class Config:
     """Trueの場合はSpectrogram2DCNNのforwardでsample_weightsを渡す。null_rateでサンプルの重みづけ"""
     do_sleep_label_smoothing: bool = True
     do_inverse_aug: bool = True
+    """Trueのときは、sequenceを逆順にしてonset/wakeupを入れ替える。"""
 
     fold: int = 0
     train_series: list[str] = utils.load_series(

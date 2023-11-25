@@ -598,6 +598,7 @@ class Spectrogram2DCNN(nn.Module):
         x: torch.Tensor,
         labels: torch.Tensor | None = None,
         sample_weights: torch.Tensor | None = None,
+        periodic_mask: torch.Tensor | None = None,
         do_mixup: bool = False,
         do_mixup_raw_signal: bool = False,
         do_cutmix: bool = False,
@@ -620,6 +621,17 @@ class Spectrogram2DCNN(nn.Module):
             x, labels, mixed_labels, lam = augmentations.mixup(x, labels)
         if do_cutmix and labels is not None:
             x, labels = augmentations.cutmix_1d(x, labels)
+
+        # exp069: はじめは単にxをmaskするだけ→うまく行かなかった
+        # if periodic_mask is not None:
+        #     # periodic_mask: (batch_size, seq_len)
+        #     # 1.0は周期的な部分, ほかは0.0 => 反転させる
+        #     mask = 1.0 - periodic_mask
+        #     # (bs, seq_len, n_feats)
+        #     x = x.permute(0, 2, 1)
+        #     x = x * mask.view(mask.shape[0], mask.shape[1], 1)
+        #     # (bs, n_feats, seq_len)
+        #     x = x.permute(0, 2, 1)
 
         x1 = self.feature_extractor(x)  # (bs,nc,height,seq_len//downsample_rate)
         # print("wavegram", x1.shape)
@@ -653,7 +665,17 @@ class Spectrogram2DCNN(nn.Module):
                 # (batch_size, pred_len, n_classes)
                 loss = loff_fn(logits, labels)
                 # (batch_size, pred_len)
-                loss = torch.mean(sample_weights * loss.mean(1).mean(1))
+                loss = loss.mean(-1)
+                if periodic_mask is not None:
+                    # (batch_size, pred_len)
+                    # periodic_mask: (batch_size, seq_len)
+                    # 1.0は周期的な部分, ほかは0.0 => 反転させる
+                    mask = 1.0 - periodic_mask
+                    loss = loss * mask
+                # (batch_size, )
+                loss = loss.mean(1)
+                # loss: (1,), sample_weights: (batch_size, )
+                loss = torch.mean(sample_weights * loss)
 
             if self.use_aux_head:
                 aux_labels = torch.max(labels, dim=1)[0].unsqueeze(-1)
@@ -755,14 +777,26 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
         if config.spectrogram2dcnn_params is None:
             raise ValueError("config.spectrogram2dcnn_params is None")
         params = config.spectrogram2dcnn_params
-        feature_extractor = feature_extractors.CNNSpectgram(
-            in_channels=params["in_channels"],
-            base_filters=params["base_filters"],
-            kernel_size=params["kernel_size"],
-            stride=params["stride"],
-            sigmoid=params["sigmoid"],
-            output_size=params["output_size"] // params["downsample_rate"],
-        )
+        if params.get("feature_extractor_type", None) is None:
+            feature_extractor = feature_extractors.CNNSpectgram(
+                in_channels=params["in_channels"],
+                base_filters=params["base_filters"],
+                kernel_size=params["kernel_size"],
+                stride=params["stride"],
+                sigmoid=params["sigmoid"],
+                output_size=params["output_size"] // params["downsample_rate"],
+            )
+        elif params.get("feature_extractor_type", None) == "SpecFeatureExtractor":
+            feature_extractor = feature_extractors.SpecFeatureExtractor(
+                in_channels=params["in_channels"],
+                height=params["base_filters"],
+                hop_length=params["hop_length"],
+                win_length=params["win_length"],
+                out_size=params["output_size"] // params["downsample_rate"],
+            )
+        else:
+            raise NotImplementedError
+
         decoder = decoders.Unet1DDecoder(
             n_channels=feature_extractor.height,
             n_classes=params["n_classes"],

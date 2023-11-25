@@ -1039,7 +1039,12 @@ def load_features(
         this_features = []
         for feature_name in feature_names:
             feature = np.load(series_dir / f"{feature_name}.npy").astype(np.float32)
-            if do_min_max_normalize and feature_name in ["anglez"]:
+            if do_min_max_normalize and feature_name in [
+                "anglez",
+                "enmo",
+                "hour_sin",
+                "hour_cos",
+            ]:
                 feature = min_max_normalize(feature, eps=1e-7)
             this_features.append(feature)
         features[series_id] = np.stack(this_features, axis=1)
@@ -1074,7 +1079,12 @@ def load_chunk_features(
         this_features = []
         for feature_name in feature_names:
             feature = np.load(series_dir / f"{feature_name}.npy").astype(np.float32)
-            if do_min_max_normalize and feature_name in ["anglez"]:
+            if do_min_max_normalize and feature_name in [
+                "anglez",
+                "enmo",
+                "hour_sin",
+                "hour_cos",
+            ]:
                 feature = min_max_normalize(feature, eps=1e-7)
             this_features.append(feature)
         this_features = np.stack(this_features, axis=1)
@@ -1178,7 +1188,7 @@ def nearest_valid_size(input_size: int, downsample_factor: int) -> int:
 
 
 def make_periodic_mask(
-    periodic_steps: np.ndarray, start: int, end: int, seq_len: int
+    periodic_steps: np.ndarray, start: int, end: int, seq_len: int, label_length: int
 ) -> np.ndarray:
     """周期的なステップを指すマスクを作成する
 
@@ -1187,10 +1197,15 @@ def make_periodic_mask(
         start:
         end:
         seq_len: int
+        label_length: int
     """
-    mask_step = [step - start for step in periodic_steps if start <= step <= end]
-    mask = np.zeros(seq_len)
-    mask[mask_step] = 1
+    mask_step = [
+        label_length * int((step - start) // seq_len)
+        for step in periodic_steps
+        if start <= step <= end
+    ]
+    label_mask = np.zeros(label_length)
+    label_mask[mask_step] = 1
     return mask
 
 
@@ -1332,10 +1347,12 @@ class SleepSegTrainDataset(Dataset):
 
         if self.train_periodic_dict is not None:
             periodic = self.train_periodic_dict[series_id]
-            periodic_mask = make_periodic_mask(periodic, start, end, self.cfg.seq_len)
+            periodic_mask = make_periodic_mask(
+                periodic, start, end, self.cfg.seq_len, label.shape[0]
+            )
             periodic_mask = torch.FloatTensor(periodic_mask)
         else:
-            periodic_mask = torch.zeros(self.cfg.seq_len)
+            periodic_mask = torch.zeros(label.shape[0])
 
         return {
             "series_id": series_id,
@@ -1678,6 +1695,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
         sample_per_epoch=cfg.sample_per_epoch,
         do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
         use_corrected_events=getattr(cfg, "use_corrected_events", False),
+        use_periodic_dict=getattr(cfg, "use_train_periodic_dict", False),
     )
 
 

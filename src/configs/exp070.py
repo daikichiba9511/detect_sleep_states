@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp066"
+    name: str = "exp070"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    63+do_inverse_aug=True+dropout=0.1
+    69+do_sample_weights=False
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -82,10 +82,11 @@ class Config:
     seq_len: int = 24 * 60 * 8
     # seq_len: int = 32 * 16 * 20
     # seq_len: int = 32 * 16 * 30
-    do_sample_weights: bool = True
+    do_sample_weights: bool = False
     """Trueの場合はSpectrogram2DCNNのforwardでsample_weightsを渡す。null_rateでサンプルの重みづけ"""
     do_sleep_label_smoothing: bool = True
-    do_inverse_aug: bool = True
+    use_corrected_events = True
+    """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
 
     fold: int = 0
     train_series: list[str] = utils.load_series(
@@ -125,7 +126,7 @@ class Config:
         se=False,
         res=False,
         scale_factor=2,
-        dropout=0.1,
+        dropout=0.0,
         # -- Spectrogram2DCNN
         # encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
         # encoder_name="tf_efficientnet_b0_ns",
