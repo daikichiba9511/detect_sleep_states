@@ -154,12 +154,13 @@ class Runner:
         dl: DataLoader,
         loss_fn: Callable | None,
         loss_monitor: AverageMeter | None,
+        slide_size: int,
         use_amp: bool = False,
         duration: int = 10,
         score_thr: float = 0.5,
         distance: int = 24 * 60 * 12,
     ) -> dict[str, pl.DataFrame]:
-        print("Infer Duration => ", duration)
+        logger.info("Infer Duration => %s (slide_size %s)", duration, slide_size)
         # onset_losses = AverageMeter("onset_loss")
         # wakeup_losses = AverageMeter("wakeup_loss")
         # total_sub = pd.DataFrame()
@@ -205,12 +206,18 @@ class Runner:
                     loss_monitor.update(loss.item())
                     labels_all.append(labels.detach().cpu().numpy())
 
+        # preds: (bs * num_step, duration, 3)
         preds = np.concatenate(preds)
         print("preds.shape: ", preds.shape, "len(keys): ", len(keys))
-        assert preds.shape[0] == len(keys), f"{preds.shape=}, {len(keys)=}"
+
         sub_df = my_utils.post_process_for_seg(
-            keys, preds[:, :, [1, 2]], score_thr=score_thr, distance=distance
+            keys,
+            preds[:, :, [1, 2]],
+            score_thr=score_thr,
+            distance=distance,
+            slide_size=slide_size,
         )
+
         if self.is_val:
             labels_all = np.concatenate(labels_all)
             plot_random_sample(keys, preds, labels_all, num_samples=5, num_chunks=10)
@@ -254,6 +261,9 @@ class Runner:
                 duration=self.configs[0].seq_len,
                 score_thr=self.configs[0].postprocess_params["score_thr"],
                 distance=self.configs[0].postprocess_params["distance"],
+                slide_size=getattr(
+                    self.configs[0], "slide_size", self.configs[0].seq_len
+                ),
                 # distance=24 * 60 * 8,
             )
             print(outs)

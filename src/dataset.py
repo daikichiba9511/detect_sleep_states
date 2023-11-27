@@ -1057,19 +1057,13 @@ def load_chunk_features(
     series_ids: Sequence[str] | None,
     processed_dir: Path,
     phase: str,
+    slide_size: int,
     do_min_max_normalize: bool,
 ) -> dict[str, np.ndarray]:
     if series_ids is None:
         series_ids = [
             series_dir.name for series_dir in (processed_dir / phase).glob("*")
         ]
-
-    def _load_chunk(i, seq_len, this_features) -> np.ndarray:
-        chunk_features = this_features[i * seq_len : (i + 1) * seq_len]
-        # chunk_features = (series_dir, feature_names, i, seq_len)
-        chunk_features = my_utils.pad_if_needed(chunk_features, seq_len, pad_value=0)
-        # chunk_features = chunk_features.transpose(1, 0)
-        return chunk_features
 
     features = {}
     for series_id in tqdm(series_ids, desc="Load features"):
@@ -1089,9 +1083,17 @@ def load_chunk_features(
             this_features.append(feature)
         this_features = np.stack(this_features, axis=1)
 
-        num_chunks = (len(this_features) // seq_len) + 1
+        num_chunks = (len(this_features) // slide_size) + 1
         for i in range(num_chunks):
-            features[f"{series_id}_{i:07}"] = _load_chunk(i, seq_len, this_features)
+            start = i * slide_size
+            end = start + seq_len
+            print(f"{series_id}_{i:07}, {start=}, {end=}, {len(this_features)=}")
+            chunk_feats = my_utils.pad_if_needed(
+                this_features[start:end], seq_len, pad_value=0
+            )
+            features[f"{series_id}_{i:07}"] = chunk_feats
+        # FIXME: for debug
+        # break
     return features
 
 
@@ -1517,6 +1519,7 @@ def _init_test_dl(
     features: list[str],
     num_workers: int,
     seed: int,
+    slide_size: int,
     do_min_max_normalize: bool = True,
 ) -> DataLoader:
     feature_dir = pathlib.Path(processed_dir)
@@ -1527,6 +1530,7 @@ def _init_test_dl(
         series_ids=series_ids,
         processed_dir=processed_dir,
         phase="test",
+        slide_size=slide_size,
         do_min_max_normalize=do_min_max_normalize,
     )
     ds = SleepSegTestDataset(cfg, chunk_features)
@@ -1554,6 +1558,7 @@ def _init_valid_dl(
     features: list[str],
     num_workers: int,
     seed: int,
+    slide_size: int,
     do_min_max_normalize: bool = False,
     use_corrected_events: bool = False,
 ) -> DataLoader:
@@ -1569,6 +1574,7 @@ def _init_valid_dl(
         series_ids=valid_series,
         processed_dir=processed_dir,
         phase="valid",
+        slide_size=slide_size,
         do_min_max_normalize=do_min_max_normalize,
     )
     print("Valid", seq_len)
@@ -1662,6 +1668,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
             num_workers=num_workers,
             seq_len=cfg.seq_len,
             features=cfg.features,
+            slide_size=getattr(cfg, "slide_size", cfg.seq_len),
             do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
         )
 
@@ -1676,6 +1683,12 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
             features=cfg.features,
             data_dir=cfg.data_dir,
             processed_dir=cfg.processed_dir,
+            slide_size=getattr(cfg, "slide_size", cfg.seq_len),
+            do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
+        )
+
+    if phase == "valid":
+        return _init_valid_dl(
             do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
             use_corrected_events=getattr(cfg, "use_corrected_events", False),
         )

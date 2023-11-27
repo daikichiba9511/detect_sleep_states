@@ -129,6 +129,7 @@ cv_score = metrics.event_detection_ap(
 )
 
 print(f"\n CV score: {cv_score}")
+raise ValueError("For DEBUG")
 
 
 ######## Analysis ########
