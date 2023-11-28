@@ -61,6 +61,7 @@ for fold in range(args.fold + 1):
         config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
         # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
     )
+    # config_.slide_size = config_.seq_len // 2
     # logger.info(
     #     "model_path: {model_path}".format(model_path=config_.model_save_path)
     # )
@@ -80,15 +81,15 @@ submission = Runner(
 )
 
 ########## 周期的な部分の予測の除外 ##########
-# logger.info("remove periodic")
-# valid_series = configs[args.fold].valid_series
-# valid_series = (
-#     pl.read_parquet(config.data_dir / "train_series.parquet")
-#     .filter(pl.col("series_id").is_in(valid_series))
-#     .to_pandas(use_pyarrow_extension_array=True)
-# )
-# valid_periodic_dict = my_utils.create_periodic_dict(valid_series)
-# submission = my_utils.remove_periodic(submission, valid_periodic_dict)
+logger.info("remove periodic")
+valid_series = configs[args.fold].valid_series
+valid_series = (
+    pl.read_parquet(config.data_dir / "train_series.parquet")
+    .filter(pl.col("series_id").is_in(valid_series))
+    .to_pandas(use_pyarrow_extension_array=True)
+)
+valid_periodic_dict = my_utils.create_periodic_dict(valid_series)
+submission = my_utils.remove_periodic(submission, valid_periodic_dict)
 
 print(submission)
 submission.to_csv("submission.csv", index=False)
@@ -129,7 +130,6 @@ cv_score = metrics.event_detection_ap(
 )
 
 print(f"\n CV score: {cv_score}")
-raise ValueError("For DEBUG")
 
 
 ######## Analysis ########

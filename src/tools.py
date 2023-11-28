@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from timm import utils as timm_utils
 from timm.scheduler import CosineLRScheduler
 from torch.cuda.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
@@ -362,14 +363,22 @@ def train_one_fold(
     fold: int,
     debug: bool,
     train_one_epoch: Callable = train_one_epoch,
-    valid_one_epoch: Callable = valid_one_epoch,
+    valid_one_epoch: Callable | None = valid_one_epoch,
     log_interval: int = 1,
     model_compile: bool = False,
     compile_mode: str = "default",
+    use_ema: bool = False,
 ) -> None:
-    logger.info(f"Start training {config.name} fold{fold}")
+    logger.info(
+        f"Start training {config.name} fold{fold} with validation {valid_one_epoch is not None}"
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(config).to(device)
+    model = build_model(config).to(device)  # type: ignore
+    if use_ema:
+        ema_model = timm_utils.ModelEmaV2(model, decay=0.998)
+    else:
+        ema_model = None
+
     if model_compile:
         print(f"Start model compile {config.use_amp = }, {compile_mode = }")
         model = cast(nn.Module, torch.compile(model, mode=compile_mode, dynamic=True))
@@ -398,7 +407,12 @@ def train_one_fold(
     # dl_train = dataset.build_dataloader_v3(config, fold, "train", debug)
     # dl_valid = dataset.build_dataloader_v3(config, fold, "valid", debug)
     dl_train = dataset.init_dataloader("train", config)
-    dl_valid = dataset.init_dataloader("valid", config)
+
+    if valid_one_epoch is not None:
+        logger.info("Do validation")
+        dl_valid = dataset.init_dataloader("valid", config)
+    else:
+        dl_valid = None
 
     scaler = GradScaler(enabled=config.use_amp)
     early_stopping = EarlyStopping(**config.early_stopping_params)
@@ -422,6 +436,7 @@ def train_one_fold(
         train_result = train_one_epoch(
             epoch=epoch,
             model=model,
+            ema_model=ema_model,
             dl_train=dl_train,
             optimizer=optimizer,
             scheduler=scheduler,
@@ -431,43 +446,45 @@ def train_one_fold(
             seed=config.seed,
             use_amp=config.use_amp,
         )
-        valid_result = valid_one_epoch(
-            epoch=epoch,
-            model=model,
-            dl_valid=dl_valid,
-            device=device,
-            criterion=criterion,
-            use_amp=config.use_amp,
-            seed=config.seed,
-        )
-        metrics_monitor.update(
-            {
-                "epoch": epoch,
-                "lr": train_result["lr"],
-                "train/loss": train_result["loss"],
-                "valid/loss": valid_result["loss"],
-                "valid/onset_loss": valid_result["onset_loss"],
-                "valid/wakeup_loss": valid_result["wakeup_loss"],
-                "valid/sleep_loss": valid_result["sleep_loss"],
-                # "valid/onset_pos_only_loss": valid_result["onset_pos_only_loss"],
-                # "valid/wakeup_pos_only_loss": valid_result["wakeup_pos_only_loss"],
-            }
-        )
-        if epoch % log_interval == 0:
-            metrics_monitor.show(log_interval=log_interval)
-
-        score = valid_result["loss"]
-        # score = (
-        #     valid_result["wakeup_pos_only_loss"] + valid_result["onset_pos_only_loss"]
-        # )
-        early_stopping.check(score, model, config.model_save_path)
-        if early_stopping.is_early_stop:
-            logger.info(
-                "Early Stopping at epoch {epoch}. best score is {early_stopping.best_score}".format(
-                    epoch=epoch, early_stopping=early_stopping
-                )
+        if valid_one_epoch is not None and dl_valid is not None:
+            valid_result = valid_one_epoch(
+                epoch=epoch,
+                model=model,
+                dl_valid=dl_valid,
+                device=device,
+                criterion=criterion,
+                use_amp=config.use_amp,
+                seed=config.seed,
+                ema_model=ema_model,
             )
-            break
+            metrics_monitor.update(
+                {
+                    "epoch": epoch,
+                    "lr": train_result["lr"],
+                    "train/loss": train_result["loss"],
+                    "valid/loss": valid_result["loss"],
+                    "valid/onset_loss": valid_result["onset_loss"],
+                    "valid/wakeup_loss": valid_result["wakeup_loss"],
+                    "valid/sleep_loss": valid_result["sleep_loss"],
+                    # "valid/onset_pos_only_loss": valid_result["onset_pos_only_loss"],
+                    # "valid/wakeup_pos_only_loss": valid_result["wakeup_pos_only_loss"],
+                }
+            )
+            if epoch % log_interval == 0:
+                metrics_monitor.show(log_interval=log_interval)
+
+            score = valid_result["loss"]
+            # score = (
+            #     valid_result["wakeup_pos_only_loss"] + valid_result["onset_pos_only_loss"]
+            # )
+            early_stopping.check(score, model, config.model_save_path)
+            if early_stopping.is_early_stop:
+                logger.info(
+                    "Early Stopping at epoch {epoch}. best score is {early_stopping.best_score}".format(
+                        epoch=epoch, early_stopping=early_stopping
+                    )
+                )
+                break
 
     metrics_monitor.save(
         config.metrics_save_path.parent / f"{config.name}_metrics_fold{fold}.csv", fold
@@ -484,9 +501,10 @@ def train_one_fold(
         ],
     )
     metrics_monitor.plot(config.metrics_save_path.parent / "lr.png", col=["lr"])
-    torch.save(
-        model.state_dict(), config.output_dir / f"last_{config.name}_fold{fold}.pth"
-    )
+    if ema_model is not None:
+        model = ema_model.module
+    state_dict = model.state_dict()
+    torch.save(state_dict, config.output_dir / f"last_{config.name}_fold{fold}.pth")
 
     elapsed_time = time.time() - start_time
     logger.info(

@@ -187,9 +187,6 @@ def post_process_for_seg(
         # this_series_preds = preds[series_idx].reshape(-1, 2)
         this_series_preds = _slide_concat(preds[series_idx], slide_size=slide_size)
 
-        print("************************** Utils.py")
-        print(f"{series_id =}, {this_series_preds.shape =}")
-
         for i, event_name in enumerate(["onset", "wakeup"]):
             this_event_preds = this_series_preds[:, i]
             steps = signal.find_peaks(

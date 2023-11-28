@@ -1087,13 +1087,10 @@ def load_chunk_features(
         for i in range(num_chunks):
             start = i * slide_size
             end = start + seq_len
-            print(f"{series_id}_{i:07}, {start=}, {end=}, {len(this_features)=}")
             chunk_feats = my_utils.pad_if_needed(
                 this_features[start:end], seq_len, pad_value=0
             )
             features[f"{series_id}_{i:07}"] = chunk_feats
-        # FIXME: for debug
-        # break
     return features
 
 
@@ -1520,7 +1517,7 @@ def _init_test_dl(
     num_workers: int,
     seed: int,
     slide_size: int,
-    do_min_max_normalize: bool = True,
+    do_min_max_normalize: bool,
 ) -> DataLoader:
     feature_dir = pathlib.Path(processed_dir)
     series_ids = [x.name for x in feature_dir.glob("*")]
@@ -1559,8 +1556,8 @@ def _init_valid_dl(
     num_workers: int,
     seed: int,
     slide_size: int,
-    do_min_max_normalize: bool = False,
-    use_corrected_events: bool = False,
+    do_min_max_normalize: bool,
+    use_corrected_events: bool,
 ) -> DataLoader:
     if use_corrected_events:
         logger.info("Use Corrected Events")
@@ -1603,10 +1600,10 @@ def _init_train_dl(
     features: list[str],
     num_workers: int,
     seed: int,
+    do_min_max_normalize: bool,
+    use_corrected_events: bool,
+    use_periodic_dict: bool,
     sample_per_epoch: int | None = None,
-    do_min_max_normalize: bool = False,
-    use_corrected_events: bool = False,
-    use_periodic_dict: bool = False,
 ) -> DataLoader:
     if use_corrected_events:
         logger.info("Use Corrected Events")
@@ -1684,11 +1681,6 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
             data_dir=cfg.data_dir,
             processed_dir=cfg.processed_dir,
             slide_size=getattr(cfg, "slide_size", cfg.seq_len),
-            do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
-        )
-
-    if phase == "valid":
-        return _init_valid_dl(
             do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
             use_corrected_events=getattr(cfg, "use_corrected_events", False),
         )

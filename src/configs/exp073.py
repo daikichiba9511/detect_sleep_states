@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp070"
+    name: str = "exp073"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    69+do_sample_weights=False
+    70+mixup_prob=0.5+do_min_max_norm+do_inverse_aug+dropout=0.2+spec_aug
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -75,7 +75,7 @@ class Config:
     """SleepSegTrainDatasetの__len__で返される値。Noneの場合はlen(series_ids)."""
 
     # Train additional params
-    mixup_prob: float = 0.0
+    mixup_prob: float = 0.5
     downsample_rate: int = 2
     upsample_rate: float = 1.0
     # seq_len: int = 24 * 60 * 20
@@ -87,8 +87,11 @@ class Config:
     do_sample_weights: bool = False
     """Trueの場合はSpectrogram2DCNNのforwardでsample_weightsを渡す。null_rateでサンプルの重みづけ"""
     do_sleep_label_smoothing: bool = True
+    do_inverse_aug: bool = True
     use_corrected_events = True
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
+    do_min_max_normalize: bool = True
+    """Trueの場合は、min-max正規化を行う。"""
 
     fold: int = 0
     train_series: list[str] = utils.load_series(
@@ -128,7 +131,7 @@ class Config:
         se=False,
         res=False,
         scale_factor=2,
-        dropout=0.0,
+        dropout=0.2,
         # -- Spectrogram2DCNN
         # encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
         # encoder_name="tf_efficientnet_b0_ns",
@@ -136,7 +139,7 @@ class Config:
         encoder_name="eca_nfnet_l1",
         encoder_weights="imagenet",
         use_sample_weights=False,
-        use_spec_augment=False,
+        use_spec_augment=True,
         spec_augment_params=dict(
             time_mask_param=100,
             freq_mask_param=10,

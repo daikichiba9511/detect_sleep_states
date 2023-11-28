@@ -9,18 +9,14 @@ import pathlib
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.transforms.functional as TF
+from timm import utils as timm_utils
 from torch.cuda.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils import clip_grad
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from timm import utils as timm_utils
-from src import metrics
-from src import models as my_models
 from src import utils
-from src.dataset import mean_std_normalize_label
 from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold
 from src.utils import (
     LoggingUtils,
@@ -61,6 +57,7 @@ def train_one_epoch_v4(
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).train()
+
     scheduler.step(epoch)
     start_time = time.time()
     losses = AverageMeter("loss")
@@ -84,13 +81,6 @@ def train_one_epoch_v4(
                 sample_weights = None
 
             periodic_mask = batch["periodic_mask"].to(device, non_blocking=True)
-
-            # mixed = False
-            # if np.random.rand() < 0.5:
-            #     X, y, y_mix, lam = mixup(X, y)
-            #     mixed = True
-            # else:
-            #     y_mix, lam = None, None
 
             if do_inverse_aug and np.random.rand() < 0.5:
                 X = torch.flip(X, dims=[2])
@@ -116,12 +106,6 @@ def train_one_epoch_v4(
             )  # Spectrogram2DCNN
             loss = out["loss"]
 
-            # logits = out["logits"]
-            # if mixed and y_mix is not None and lam is not None:
-            #     loss_mixed = criterion(logits, y_mix)
-            #     loss *= lam
-            #     loss += loss_mixed * (1 - lam)
-
             if not torch.isnan(loss) or not torch.isinf(loss):
                 scaler.scale(loss).backward()  # type: ignore
 
@@ -144,109 +128,6 @@ def train_one_epoch_v4(
     return result
 
 
-def valid_one_epoch_v4(
-    epoch: int,
-    model: nn.Module,
-    ema_model: timm_utils.ModelEmaV2 | None,
-    dl_valid: DataLoader,
-    device: torch.device,
-    criterion: LossFunc,
-    seed: int = 42,
-    use_amp: bool = False,
-    # -- additional params
-) -> dict[str, float | int]:
-    seed_everything(seed)
-    model = model.to(device).eval()
-    losses = AverageMeter("loss")
-    onset_losses = AverageMeter("onset_loss")
-    wakeup_losses = AverageMeter("wakeup_loss")
-    sleep_losses = AverageMeter("sleep_loss")
-    onset_pos_only_losses = AverageMeter("onset_pos_only_loss")
-    wakeup_pos_only_losses = AverageMeter("wakeup_pos_only_loss")
-    bce = nn.BCEWithLogitsLoss()
-    start_time = time.time()
-
-    pbar = tqdm(
-        enumerate(dl_valid), total=len(dl_valid), dynamic_ncols=True, leave=True
-    )
-    # valid_output = []
-    for _, batch in pbar:
-        with torch.no_grad(), autocast(enabled=use_amp, dtype=torch.float16):
-            # (BS, n_features, seq_len)
-            X = batch["feature"].to(device, non_blocking=True)
-            # (BS, seq_len, 3)
-            y = batch["label"].to(device, non_blocking=True)
-
-            if ema_model is not None and isinstance(model, timm_utils.ModelEmaV2):
-                model = ema_model.module
-
-            out = model(X, y)  # Spectrogram2DCNN
-            # logits = out["logits"]
-            loss = out["loss"]
-            if not (torch.isnan(loss) or torch.isinf(loss)):
-                losses.update(loss.item())
-                pbar.set_postfix(dict(loss=f"{losses.avg:.5f}"))
-
-            logits = out["logits"].detach()
-
-            # Loss_sleep
-            y_sleep = y[:, :, 0]
-            y_sleep_pos_indices = y_sleep > 0
-            loss_sleep = bce(
-                logits[y_sleep_pos_indices][:, 0], y_sleep[y_sleep_pos_indices]
-            )
-            if not torch.isnan(loss_sleep):
-                sleep_losses.update(loss_sleep.item())
-
-            # Loss_onset
-            y_onset = y[:, :, 1]
-            y_onset_pos_indices = y_onset > 0
-            loss_onset = bce(
-                logits[y_onset_pos_indices][:, 1], y_onset[y_onset_pos_indices]
-            )
-            if not torch.isnan(loss_onset):
-                onset_losses.update(loss_onset.item())
-
-            # Loss_wakeup
-            y_wakeup = y[:, :, 2]
-            y_wakeup_pos_indices = y_wakeup > 0
-            loss_wakeup = bce(
-                logits[y_wakeup_pos_indices][:, 2], y_wakeup[y_wakeup_pos_indices]
-            )
-            if not torch.isnan(loss_wakeup):
-                wakeup_losses.update(loss_wakeup.item())
-
-            # resized_logits = TF.resize(
-            #     logits.sigmoid().detach().cpu(),
-            #     size=[duration, logits.shape[2]],
-            #     antialias=False,
-            # )
-            # resized_y = TF.resize(
-            #     y.detach().cpu(),
-            #     size=[duration, logits.shape[2]],
-            #     antialias=False,
-            # )
-            # valid_output.append(
-            #     (
-            #         resized_logits,
-            #         resized_y,
-            #         loss.detach().item(),
-            #     )
-            # )
-
-    result = {
-        "epoch": epoch,
-        "loss": losses.avg,
-        "onset_loss": onset_losses.avg,
-        "wakeup_loss": wakeup_losses.avg,
-        "sleep_loss": sleep_losses.avg,
-        "onset_pos_only_loss": onset_pos_only_losses.avg,
-        "wakeup_pos_only_loss": wakeup_pos_only_losses.avg,
-        "elapsed_time": time.time() - start_time,
-    }
-    return result
-
-
 def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> None:
     cfg = importlib.import_module(f"src.configs.{config}").Config
     cfg.model_save_path = cfg.output_dir / (cfg.model_save_name + f"{fold}.pth")
@@ -254,12 +135,9 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
         "./input/for_train/folded_series_ids_fold5_seed42.json"
     )
     # importした時点でfold=0で評価されてるので再度上書き
-    cfg.train_series = utils.load_series(
-        train_series_path, "train_series", fold=int(fold)
-    )
-    cfg.valid_series = utils.load_series(
-        train_series_path, "valid_series", fold=int(fold)
-    )
+    train_series = utils.load_series(train_series_path, "train_series", fold=int(fold))
+    train_series += utils.load_series(train_series_path, "valid_series", fold=int(fold))
+    cfg.train_series = train_series
 
     if debug:
         cfg.train_series = cfg.train_series[:5]
@@ -271,7 +149,7 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
 
     cfg_map = get_class_vars(cfg)
     LOGGER.info(
-        f"running train_v3.py => fold: {fold}, debug: {debug}, commit_hash: {commit_hash}"
+        f"running full_train_v3.py => fold: {fold}, debug: {debug}, commit_hash: {commit_hash}"
     )
     LOGGER.info(f"Fold: {fold}\n {pprint.pformat(cfg_map)}")
     train_one_fold(
@@ -287,11 +165,10 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
             do_sample_weights=getattr(cfg, "do_sample_weights", False),
             do_inverse_aug=getattr(cfg, "do_inverse_aug", False),
         ),
-        valid_one_epoch=partial(valid_one_epoch_v4),
+        valid_one_epoch=None,
         model_compile=model_compile,
         # compile_mode="max-autotune",
         compile_mode="default",
-        use_ema=True,
     )
     LOGGER.info(f"{cfg.name}: Fold {fold} training has finished.")
 

@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp070"
+    name: str = "exp071"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    69+do_sample_weights=False
+    70+do_min_max_normalize=True
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -73,13 +73,18 @@ class Config:
 
     sample_per_epoch: int | None = None
     """SleepSegTrainDatasetの__len__で返される値。Noneの場合はlen(series_ids)."""
+    do_min_max_normalize: bool = True
+    """Trueの場合は、min-max正規化を行う。"""
 
     # Train additional params
     mixup_prob: float = 0.0
     downsample_rate: int = 2
-    upsample_rate: float = 1.0
+    upsample_rate: int = 1
     # seq_len: int = 24 * 60 * 20
     seq_len: int = 24 * 60 * 8
+    slide_size: int = seq_len // 2
+    """推論時にスライドする大きさ"""
+
     # slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20

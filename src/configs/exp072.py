@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp070"
+    name: str = "exp071"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    69+do_sample_weights=False
+    71+encoder=eca_nfnet_l0
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -28,9 +28,9 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 4
-    batch_size: int = int(8 * 2)
+    batch_size: int = int(8 * 4)
     num_workers: int = 8 * 1
-    num_grad_accum: int = 2
+    num_grad_accum: int = 1
 
     # Model
     model_type: str = "Spectrogram2DCNN"
@@ -73,13 +73,18 @@ class Config:
 
     sample_per_epoch: int | None = None
     """SleepSegTrainDatasetの__len__で返される値。Noneの場合はlen(series_ids)."""
+    do_min_max_normalize: bool = True
+    """Trueの場合は、min-max正規化を行う。"""
 
     # Train additional params
     mixup_prob: float = 0.0
     downsample_rate: int = 2
-    upsample_rate: float = 1.0
+    upsample_rate: int = 1
     # seq_len: int = 24 * 60 * 20
     seq_len: int = 24 * 60 * 8
+    slide_size: int = seq_len // 2
+    """推論時にスライドする大きさ"""
+
     # slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20
@@ -128,12 +133,13 @@ class Config:
         se=False,
         res=False,
         scale_factor=2,
-        dropout=0.0,
+        dropout=0.1,
         # -- Spectrogram2DCNN
         # encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
         # encoder_name="tf_efficientnet_b0_ns",
         # encoder_name="resnet34",
-        encoder_name="eca_nfnet_l1",
+        # encoder_name="eca_nfnet_l1",
+        encoder_name="eca_nfnet_l0",
         encoder_weights="imagenet",
         use_sample_weights=False,
         use_spec_augment=False,
