@@ -128,9 +128,10 @@ class UnetDecoder(nn.Module):
 def _check_reduction(reduction_factors: Sequence[int]) -> None:
     r_prev = 1
     for r in reduction_factors:
-        if r / r_prev != 2:
+        if r / r_prev % 2 != 0:
             raise ValueError(
                 "Reduction factor of each block should be divisible by the previous one"
+                ", got {} {} {}".format(r_prev, r, reduction_factors),
             )
         r_prev = r
 
@@ -156,7 +157,10 @@ class CustomUnet(nn.Module):
         encoder_channels = self.encoder.feature_info.channels()  # type: ignore
         if len(encoder_channels) != len(decoder_channels):
             raise ValueError(
-                "Encoder channels and decoder channels should have the same length"
+                "Encoder channels and decoder channels should have the same length",
+                ", got encoder {} and decorder {}".format(
+                    encoder_channels, decoder_channels
+                ),
             )
         _check_reduction(self.encoder.feature_info.reduction())  # type: ignore
         print(name, encoder_channels, decoder_channels)

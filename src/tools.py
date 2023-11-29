@@ -504,7 +504,12 @@ def train_one_fold(
     if ema_model is not None:
         model = ema_model.module
     state_dict = model.state_dict()
-    torch.save(state_dict, config.output_dir / f"last_{config.name}_fold{fold}.pth")
+    fname = (
+        f"last_{config.name}_fold{fold}.pth"
+        if valid_one_epoch is not None
+        else f"full_{config.name}_fold{fold}.pth"
+    )
+    torch.save(state_dict, config.output_dir / fname)
 
     elapsed_time = time.time() - start_time
     logger.info(

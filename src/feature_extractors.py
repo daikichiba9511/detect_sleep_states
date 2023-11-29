@@ -57,8 +57,17 @@ class SpecFeatureExtractor(nn.Module):
         if self.out_size is not None:
             self.pool = nn.AdaptiveAvgPool2d((None, self.out_size))
 
+        self.conv2d = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=in_channels - 1,
+            kernel_size=(1, 1),
+            stride=(1, 1),
+            padding=(0, 0),
+        )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         img = self.feature_extractor(x)
+        img = self.conv2d(img)
         if self.out_size is not None:
             img = self.pool(img)
         return img
@@ -165,7 +174,7 @@ class CNNSpectgram(nn.Module):
 
 def _test_spec_feature_extractor() -> None:
     batch_size = 2
-    in_channels = 3
+    in_channels = 4
     height = 64
     win_length = 32
     hop_length = 256

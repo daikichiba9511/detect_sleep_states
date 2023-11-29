@@ -63,11 +63,38 @@
 # make train3 CONFIG=exp052_1 FOLD=1
 
 # exp067: 063+use_corrected_events=True, 1.6h * 3 = 4.8h
-make train3 CONFIG=exp067 FOLD=1
-make train3 CONFIG=exp067 FOLD=2
-make train3 CONFIG=exp067 FOLD=3
+# make train3 CONFIG=exp067 FOLD=1
+# make train3 CONFIG=exp067 FOLD=2
+# make train3 CONFIG=exp067 FOLD=3
 
 # exp068: 064+use_corrected_events=False, 6.0h * 3 = 18.0h
-make train3 CONFIG=exp068 FOLD=0
-make train3 CONFIG=exp068 FOLD=1
-make train3 CONFIG=exp068 FOLD=2
+# make train3 CONFIG=exp068 FOLD=0
+# make train3 CONFIG=exp068 FOLD=1
+# make train3 CONFIG=exp068 FOLD=2
+
+# exp073,074,75,76
+# make train3 CONFIG=exp073 FOLD=0
+# make train3 CONFIG=exp073 FOLD=1
+# make train3 CONFIG=exp073 FOLD=2
+
+# make train3 CONFIG=exp074 FOLD=0
+# make train3 CONFIG=exp074 FOLD=1
+# make train3 CONFIG=exp074 FOLD=2
+
+# make train3 CONFIG=exp075 FOLD=0
+# make train3 CONFIG=exp075 FOLD=1
+
+# make train3 CONFIG=exp076 FOLD=0
+# make train3 CONFIG=exp076 FOLD=1
+# make train3 CONFIG=exp076 FOLD=2
+
+make train3 CONFIG=exp078 FOLD=0
+make train3 CONFIG=exp078 FOLD=1
+make train3 CONFIG=exp078 FOLD=2
+
+# make final sub
+rye run python ./scripts/full_train_v3.py --config exp075 --fold 0
+# rye run python ./scripts/full_train_v3.py --config exp074 --fold 0
+rye run python ./scripts/full_train_v3.py --config exp070 --fold 0
+# rye run python ./scripts/full_train_v3.py --config exp067 --fold 0
+rye run python ./scripts/full_train_v3.py --config exp064 --fold 0

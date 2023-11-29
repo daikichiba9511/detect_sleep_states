@@ -138,6 +138,7 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
     train_series = utils.load_series(train_series_path, "train_series", fold=int(fold))
     train_series += utils.load_series(train_series_path, "valid_series", fold=int(fold))
     cfg.train_series = train_series
+    LOGGER.info("full training with len(train_series): %d", len(cfg.train_series))
 
     if debug:
         cfg.train_series = cfg.train_series[:5]

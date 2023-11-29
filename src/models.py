@@ -545,6 +545,7 @@ class Spectrogram2DCNN(nn.Module):
         use_aux_head: bool = False,
         use_custom_encoder: bool = True,
         spec_augment: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        decoder_channels: list[int] = [256, 128, 64, 32, 16],
     ) -> None:
         super().__init__()
         self.feature_extractor = feature_extractor
@@ -553,7 +554,7 @@ class Spectrogram2DCNN(nn.Module):
             self.encoder = encoders.CustomUnet(
                 name=encoder_name,
                 pretrained=encoder_weights is not None,
-                decoder_channels=[258, 128, 64, 32, 16],
+                decoder_channels=decoder_channels,
                 n_classes=1,
                 # dropout=0.2,
             )
@@ -648,10 +649,6 @@ class Spectrogram2DCNN(nn.Module):
         else:
             mixed_labels, lam = None, None
 
-        #
-        # print("mel_conv before", x.shape)
-        # x = self.mel_conv(x)
-        # print(f"mel_spectrogram.shape: {x.shape}, wavegram.shape: {x1.shape}")
         x1 = self.encoder(x1).squeeze(1)  # (batch_size, height, seq_len)
 
         logits = self.decoder(x1)  # (batch_size, n_classes, n_timesteps)
@@ -963,7 +960,8 @@ def _test_run_model5():
         # encoder_name="resnet18",
         # encoder_name="maxvit_tiny_rw_256",  # これ動かすにはカスタム必要
         # encoder_name="maxvit_tiny_rw_256",  # これ動かすにはカスタム必要
-        encoder_name="maxvit_rmlp_nano_rw_256.sw_in1k",  # これ動かすにはカスタム必要
+        # encoder_name="maxvit_rmlp_nano_rw_256.sw_in1k",  # これ動かすにはカスタム必要
+        encoder_name="convnext_tiny.in12k_ft_in1k",
         # encoder_name="mit_b0",
         encoder_weights="imagenet",
         # encoder_weights=None,
@@ -994,6 +992,7 @@ def _test_run_model5():
         encoder_weights=params["encoder_weights"],
         use_sample_weights=False,
         use_aux_head=False,
+        decoder_channels=[256, 128, 64, 32],
     )
     model = model.to(device).train()
 

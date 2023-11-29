@@ -133,6 +133,7 @@ def made_spec_augment_func(
     https://pytorch.org/audio/stable/transforms.html
     """
     return nn.Sequential(
+        # TAT.TimeStretch(fixed_rate=0.9),
         TAT.TimeMasking(time_mask_param=time_mask_param),
         TAT.FrequencyMasking(freq_mask_param=freq_mask_param),
     )
