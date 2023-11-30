@@ -88,13 +88,13 @@
 # make train3 CONFIG=exp076 FOLD=1
 # make train3 CONFIG=exp076 FOLD=2
 
-make train3 CONFIG=exp078 FOLD=0
-make train3 CONFIG=exp078 FOLD=1
-make train3 CONFIG=exp078 FOLD=2
+# make train3 CONFIG=exp078 FOLD=0
+# make train3 CONFIG=exp078 FOLD=1
+# make train3 CONFIG=exp078 FOLD=2
 
 # make final sub
-rye run python ./scripts/full_train_v3.py --config exp075 --fold 0
+# rye run python ./scripts/full_train_v3.py --config exp075 --fold 0
 # rye run python ./scripts/full_train_v3.py --config exp074 --fold 0
-rye run python ./scripts/full_train_v3.py --config exp070 --fold 0
+# rye run python ./scripts/full_train_v3.py --config exp070 --fold 0
 # rye run python ./scripts/full_train_v3.py --config exp067 --fold 0
-rye run python ./scripts/full_train_v3.py --config exp064 --fold 0
+# rye run python ./scripts/full_train_v3.py --config exp064 --fold 0

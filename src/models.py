@@ -820,6 +820,7 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             use_sample_weights=params["use_sample_weights"],
             spec_augment=spec_augment,
             use_aux_head=params.get("use_aux_head", False),
+            decoder_channels=params.get("decoder_channels", [256, 128, 64, 32, 16]),
         )
         return model
 
@@ -992,7 +993,7 @@ def _test_run_model5():
         encoder_weights=params["encoder_weights"],
         use_sample_weights=False,
         use_aux_head=False,
-        decoder_channels=[256, 128, 64, 32],
+        decoder_channels=[256, 128, 64, 32, 16],
     )
     model = model.to(device).train()
 
