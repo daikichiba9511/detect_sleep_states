@@ -76,7 +76,8 @@ config_.slide_size = config_.seq_len // 2
 # config_.model_save_path = "/kaggle/input/sleep-submit/exp074/full_exp074_fold0.pth"
 config_.model_save_path = (
     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
-    config_.output_dir / f"full_{config_.name}_fold0.pth"
+    config_.output_dir / f"last_{config_.name}_fold0.pth"
+    # config_.output_dir / f"full_{config_.name}_fold0.pth"
 )
 pprint.pprint(get_class_vars(config_))
 configs.append(config_)
@@ -88,12 +89,24 @@ config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
 config_.slide_size = config_.seq_len // 2
 config_.model_save_path = (
     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
-    # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
-    config_.output_dir / f"full_{config_.name}_fold0.pth"
+    config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
+    # config_.output_dir / f"full_{config_.name}_fold0.pth"
 )
 pprint.pprint(get_class_vars(config_))
 configs.append(config_)
 
+# -- 071
+config_ = importlib.import_module("src.configs.exp071").Config
+config_.spectrogram2dcnn_params["encoder_weights"] = None
+config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
+config_.slide_size = config_.seq_len // 2
+config_.model_save_path = (
+    # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+    config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
+    # config_.output_dir / f"full_{config_.name}_fold0.pth"
+)
+pprint.pprint(get_class_vars(config_))
+configs.append(config_)
 
 print(f"len(configs): {len(configs)}")
 
