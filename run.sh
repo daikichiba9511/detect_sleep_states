@@ -98,3 +98,21 @@
 # rye run python ./scripts/full_train_v3.py --config exp070 --fold 0
 # rye run python ./scripts/full_train_v3.py --config exp067 --fold 0
 # rye run python ./scripts/full_train_v3.py --config exp064 --fold 0
+
+# rye run python ./scripts/full_train_v3.py --config exp083 --fold 0
+# rye run python ./scripts/full_train_v3.py --config exp084 --fold 0
+
+# 1.5h * 2 = 3.0h
+rye run python ./scripts/train_v3.py --config exp082 --fold 0
+rye run python ./scripts/train_v3.py --config exp082 --fold 1
+# rye train3 ./srcripts/train_v3.py --config exp082 --fold 2
+
+# 1.5h * 2 = 3.0h
+rye run python ./scripts/train_v3.py --config exp083 --fold 0
+rye run python ./scripts/train_v3.py --config exp083 --fold 1
+# rye train3 ./srcripts/train_v3.py --config exp083 --fold 2
+
+# 1.5h * 2 = 3.0h
+rye run python ./scripts/train_v3.py --config exp084 --fold 0
+rye run python ./scripts/train_v3.py --config exp084 --fold 1
+# rye train3 ./srcripts/train_v3.py --config exp084 --fold 2

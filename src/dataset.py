@@ -1565,7 +1565,9 @@ def _init_valid_dl(
         event_df = pl.read_csv(data_dir / "train_events_corrected.csv").drop_nulls()
     elif use_corrected_events_v2:
         logger.info("Use Corrected Events V2")
-        event_df = pl.read_csv(pathlib.Path("./input/for_train") / "train_events_v1130.csv").drop_nulls()
+        event_df = pl.read_csv(
+            pathlib.Path("./input/for_train") / "train_events_v1130.csv"
+        ).drop_nulls()
     else:
         event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
     valid_event_df = event_df.filter(pl.col("series_id").is_in(valid_series))
@@ -1615,7 +1617,9 @@ def _init_train_dl(
         event_df = pl.read_csv(data_dir / "train_events_corrected.csv").drop_nulls()
     elif use_corrected_events_v2:
         logger.info("Use Corrected Events V2")
-        event_df = pl.read_csv(pathlib.Path("./input/for_train") / "train_events_v1130.csv").drop_nulls()
+        event_df = pl.read_csv(
+            pathlib.Path("./input/for_train") / "train_events_v1130.csv"
+        ).drop_nulls()
     else:
         event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
 
@@ -1691,6 +1695,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
             slide_size=getattr(cfg, "slide_size", cfg.seq_len),
             do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
             use_corrected_events=getattr(cfg, "use_corrected_events", False),
+            use_corrected_events_v2=getattr(cfg, "use_corrected_events_v2", False),
         )
 
     # Train
@@ -1708,7 +1713,7 @@ def init_dataloader(phase: str, cfg: DataloaderConfigV4) -> DataLoader:
         sample_per_epoch=cfg.sample_per_epoch,
         do_min_max_normalize=getattr(cfg, "do_min_max_normalize", False),
         use_corrected_events=getattr(cfg, "use_corrected_events", False),
-        use_corrected_events=getattr(cfg, "use_corrected_events_v2", False),
+        use_corrected_events_v2=getattr(cfg, "use_corrected_events_v2", False),
         use_periodic_dict=getattr(cfg, "use_train_periodic_dict", False),
     )
 
