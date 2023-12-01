@@ -1283,6 +1283,8 @@ class SleepSegTrainDataset(Dataset):
                 self.series_weights = {
                     d["series_id"]: d["weight"] for d in self.series_weights
                 }
+        else:
+            self.series_weights = {}
 
     def __len__(self) -> int:
         return (

@@ -79,7 +79,7 @@ class Config:
     downsample_rate: int = 2
     upsample_rate: float = 1.0
     # seq_len: int = 24 * 60 * 20
-    seq_len: int = 32 * 16 * 20
+    seq_len: int = 32 * 16 * 20  # 10240
     # seq_len: int = 24 * 60 * 8
     slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""

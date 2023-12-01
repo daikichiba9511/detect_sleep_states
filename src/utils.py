@@ -131,7 +131,7 @@ def load_series(path: pathlib.Path, key: str, fold: int) -> list[str]:
     return fold_series[key]
 
 
-def _slide_concat(chunk_preds: np.ndarray, slide_size: int) -> np.ndarray:
+def _slide_concat(chunk_preds: np.ndarray, slide_size: int, offset: int) -> np.ndarray:
     """Slide and concat chunks
 
     Args:
@@ -145,11 +145,16 @@ def _slide_concat(chunk_preds: np.ndarray, slide_size: int) -> np.ndarray:
     preds = np.zeros((n_chunks * slide_size, n_classes))
     counts = np.zeros((n_chunks * slide_size, n_classes))
     for i in range(n_chunks):
-        start = i * slide_size
-        end = start + chunk_size
+        start = (i * slide_size) + offset
+        end = (start + chunk_size) - 2 * offset
+
         chunk_preds_i = chunk_preds[i]
+        # print("Before padding:", chunk_preds_i.shape)
+        # print("start:", start, "end:", end)
         if end > preds.shape[0]:
             chunk_preds_i = chunk_preds_i[: preds.shape[0] - end]
+        chunk_preds_i = chunk_preds_i[offset:-offset]
+        # print("After padding:", chunk_preds_i.shape)
 
         preds[start:end] += chunk_preds_i
         counts[start:end] += 1
@@ -169,6 +174,7 @@ def post_process_for_seg(
     slide_size: int,
     score_thr: float = 0.01,
     distance: int = 5000,
+    offset: int = 500,
 ) -> pl.DataFrame:
     """
     Args:
@@ -185,7 +191,9 @@ def post_process_for_seg(
     for series_id in unique_series_ids:
         series_idx = np.where(series_ids == series_id)[0]
         # this_series_preds = preds[series_idx].reshape(-1, 2)
-        this_series_preds = _slide_concat(preds[series_idx], slide_size=slide_size)
+        this_series_preds = _slide_concat(
+            preds[series_idx], slide_size=slide_size, offset=offset
+        )
 
         for i, event_name in enumerate(["onset", "wakeup"]):
             this_event_preds = this_series_preds[:, i]
