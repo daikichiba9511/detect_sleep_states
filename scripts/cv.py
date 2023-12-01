@@ -60,8 +60,8 @@ for fold in range(args.fold + 1):
     config_.fold = args.fold
 
     config_.model_save_path = (
-        config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
-        # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
+        # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+        config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
     )
     # config_.slide_size = config_.seq_len // 2
     # logger.info(
