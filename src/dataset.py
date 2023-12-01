@@ -1569,6 +1569,7 @@ def _init_valid_dl(
             pathlib.Path("./input/for_train") / "train_events_v1130.csv"
         ).drop_nulls()
     else:
+        logger.info("Use Original Events")
         event_df = pl.read_csv(data_dir / "train_events.csv").drop_nulls()
     valid_event_df = event_df.filter(pl.col("series_id").is_in(valid_series))
     valid_chunk_features = load_chunk_features(

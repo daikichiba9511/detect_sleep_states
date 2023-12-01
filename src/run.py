@@ -130,13 +130,15 @@ class Runner:
     def _init_dl(self, debug: bool = False, fold: int = 0) -> DataLoader:
         logger.info("Debug mode: %s", debug)
         if self.is_val:
-            # dl = build_dataloader_v3(self.dataconfig, fold, "valid", debug)
+            print("\n###############################################\n")
             self.dataconfig.use_corrected_events = False
-            print(my_utils.get_class_vars(self.dataconfig))
+            # self.dataconfig.use_corrected_events_v2 = False
+            self.dataconfig.use_corrected_events_v2 = False
+            logger.info(my_utils.get_class_vars(self.dataconfig))
+            print("\n###############################################\n")
             dl = dataset.init_dataloader("valid", self.dataconfig)
             return dl
         else:
-            # dl = build_dataloader_v3(self.dataconfig, fold, "test", debug)
             dl = dataset.init_dataloader("test", self.dataconfig)
             return dl
 

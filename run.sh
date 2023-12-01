@@ -105,6 +105,8 @@
 # 1.5h * 2 = 3.0h
 rye run python ./scripts/train_v3.py --config exp082 --fold 0
 rye run python ./scripts/train_v3.py --config exp082 --fold 1
+rye run python ./scripts/train_v3.py --config exp082_1 --fold 0
+rye run python ./scripts/train_v3.py --config exp082_1 --fold 1
 # rye train3 ./srcripts/train_v3.py --config exp082 --fold 2
 
 # 1.5h * 2 = 3.0h

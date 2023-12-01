@@ -54,20 +54,20 @@ print(df_valid_solution)
 configs = []
 
 # 個別のvalidation用
-# for fold in range(args.fold + 1):
-#     config = importlib.import_module(f"src.configs.{args.config}").Config
-#     config_ = config()
-#     config_.fold = args.fold
-#
-#     config_.model_save_path = (
-#         # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
-#         config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
-#     )
-#     # config_.slide_size = config_.seq_len // 2
-#     # logger.info(
-#     #     "model_path: {model_path}".format(model_path=config_.model_save_path)
-#     # )
-#     configs.append(copy.deepcopy(config_))
+for fold in range(args.fold + 1):
+    config = importlib.import_module(f"src.configs.{args.config}").Config
+    config_ = config()
+    config_.fold = args.fold
+
+    config_.model_save_path = (
+        config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+        # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
+    )
+    # config_.slide_size = config_.seq_len // 2
+    # logger.info(
+    #     "model_path: {model_path}".format(model_path=config_.model_save_path)
+    # )
+    configs.append(copy.deepcopy(config_))
 
 # -- 074
 # config_ = importlib.import_module("src.configs.exp074").Config
@@ -124,30 +124,30 @@ configs = []
 # configs.append(config_)
 
 # -- 083
-config_ = importlib.import_module("src.configs.exp083").Config
-config_.spectrogram2dcnn_params["encoder_weights"] = None
-config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
-config_.slide_size = config_.seq_len // 2
-config_.model_save_path = (
-    # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
-    # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
-    config_.output_dir / f"full_{config_.name}_fold0.pth"
-)
-pprint.pprint(get_class_vars(config_))
-configs.append(config_)
-
-# -- 084
-config_ = importlib.import_module("src.configs.exp084").Config
-config_.spectrogram2dcnn_params["encoder_weights"] = None
-config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
-config_.slide_size = config_.seq_len // 2
-config_.model_save_path = (
-    # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
-    # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
-    config_.output_dir / f"full_{config_.name}_fold0.pth"
-)
-pprint.pprint(get_class_vars(config_))
-configs.append(config_)
+# config_ = importlib.import_module("src.configs.exp083").Config
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
+#     config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(config_)
+#
+# # -- 084
+# config_ = importlib.import_module("src.configs.exp084").Config
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
+#     config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(config_)
 
 print(f"len(configs): {len(configs)}")
 
