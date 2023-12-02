@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp087"
+    name: str = "exp089"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    73-min_max_normalize+encoder=maxvit_rmlp_tiny_rw_256.sw_in1k+seq_len=10240-do_inverse_aug
+    75+use_corrected_events_v2
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -28,7 +28,7 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 4
-    batch_size: int = int(8 * 0.5)
+    batch_size: int = int(8 * 1)
     num_workers: int = 8 * 1
     num_grad_accum: int = 32 // batch_size
 
@@ -79,9 +79,8 @@ class Config:
     downsample_rate: int = 2
     upsample_rate: float = 1.0
     # seq_len: int = 24 * 60 * 20
-    # seq_len: int = 24 * 60 * 8
-    seq_len: int = 32 * 16 * 20  # =10240
-    slide_size: int = seq_len // 2
+    seq_len: int = 24 * 60 * 8
+    # slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20
     # seq_len: int = 32 * 16 * 30
@@ -89,9 +88,9 @@ class Config:
     """Trueの場合はSpectrogram2DCNNのforwardでsample_weightsを渡す。null_rateでサンプルの重みづけ"""
     do_sleep_label_smoothing: bool = True
     do_inverse_aug: bool = False
-    use_corrected_events_v2 = True
+    use_corrected_events_v2 = False
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
-    do_min_max_normalize: bool = False
+    do_min_max_normalize: bool = True
     """Trueの場合は、min-max正規化を行う。"""
 
     fold: int = 0
@@ -120,7 +119,7 @@ class Config:
         downsample_rate=downsample_rate,
         # -- CNNSpectrogram
         in_channels=len(features),  # is same as feature_dim
-        base_filters=64 * 4,
+        base_filters=64 * 1,
         kernel_size=[32, 16, downsample_rate],
         stride=downsample_rate,
         sigmoid=True,
@@ -134,10 +133,11 @@ class Config:
         scale_factor=2,
         dropout=0.2,
         # -- Spectrogram2DCNN
-        encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
+        # encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
         # encoder_name="tf_efficientnet_b0_ns",
         # encoder_name="resnet34",
         # encoder_name="eca_nfnet_l1",
+        encoder_name="dm_nfnet_f0",
         encoder_weights="imagenet",
         use_sample_weights=False,
         use_spec_augment=True,

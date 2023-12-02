@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp087"
+    name: str = "exp087_2"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    73-min_max_normalize+encoder=maxvit_rmlp_tiny_rw_256.sw_in1k+seq_len=10240-do_inverse_aug
+    73-min_max_normalize+encoder=maxvit_rmlp_tiny_rw_256.sw_in1k+seq_len=10240-do_inverse_aug+FocalLoss
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -145,4 +145,5 @@ class Config:
             time_mask_param=100,
             freq_mask_param=10,
         ),
+        loss_type="FocalLoss",
     )

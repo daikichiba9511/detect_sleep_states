@@ -520,8 +520,8 @@ def event_detection_ap(
     # Match detections to ground truth events by evaluation group
     detections_matched = []
     for key in aggregation_keys.itertuples(index=False):
-        dets = detections_grouped.get_group(key)
-        gts = ground_truths_grouped.get_group(key)
+        dets = detections_grouped.get_group(key).dropna()
+        gts = ground_truths_grouped.get_group(key).dropna()
         assert isinstance(dets, pd.DataFrame)
         assert isinstance(gts, pd.DataFrame)
         detections_matched.append(

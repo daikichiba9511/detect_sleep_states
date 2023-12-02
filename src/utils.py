@@ -145,6 +145,10 @@ def _slide_concat(chunk_preds: np.ndarray, slide_size: int, offset: int) -> np.n
     preds = np.zeros((n_chunks * slide_size, n_classes))
     counts = np.zeros((n_chunks * slide_size, n_classes))
     for i in range(n_chunks):
+        # start                             end
+        # |                                 |
+        # -----------------------------------
+        # <..>|<--------------------->|<...>
         start = (i * slide_size) + offset
         end = (start + chunk_size) - 2 * offset
 

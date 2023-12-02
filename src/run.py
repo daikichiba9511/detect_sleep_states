@@ -120,20 +120,38 @@ def _infer_for_seg(
 
 class Runner:
     def __init__(
-        self, configs, dataconfig, is_val: bool = False, device: str = "cuda"
+        self,
+        configs,
+        dataconfig,
+        is_val: bool = False,
+        device: str = "cuda",
+        valid_data_type: str = "org",
     ) -> None:
         self.is_val = is_val
         self.configs = configs
         self.dataconfig = dataconfig
         self.device = torch.device(device)
+        self.valid_data_type = valid_data_type
+        if self.is_val and self.valid_data_type not in [
+            "org",
+            "v1119",
+            "v1130",
+        ]:
+            raise ValueError("valid_data_type must be org or corrected")
 
     def _init_dl(self, debug: bool = False, fold: int = 0) -> DataLoader:
         logger.info("Debug mode: %s", debug)
         if self.is_val:
             print("\n###############################################\n")
-            self.dataconfig.use_corrected_events = False
-            # self.dataconfig.use_corrected_events_v2 = False
-            self.dataconfig.use_corrected_events_v2 = False
+            if self.valid_data_type == "org":
+                self.dataconfig.use_corrected_events = False
+                self.dataconfig.use_corrected_events_v2 = False
+            elif self.valid_data_type == "v1119":
+                self.dataconfig.use_corrected_events = True
+                self.dataconfig.use_corrected_events_v2 = False
+            else:
+                self.dataconfig.use_corrected_events = False
+                self.dataconfig.use_corrected_events_v2 = True
             logger.info(my_utils.get_class_vars(self.dataconfig))
             print("\n###############################################\n")
             dl = dataset.init_dataloader("valid", self.dataconfig)

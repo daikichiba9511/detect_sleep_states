@@ -44,10 +44,24 @@ logger.info(f"\n{pprint.pformat(get_class_vars(config))}")
 #     pl.col("fold") == args.fold
 # )
 df_valid_series = config.valid_series
-df_valid_events = pl.read_csv(config.train_events_path, dtypes={"step": pl.Int64})
-df_valid_solution = df_valid_events.filter(
-    pl.col("series_id").is_in(df_valid_series)
-).to_pandas(use_pyarrow_extension_array=True)
+
+# valid_data_type = "org"
+# valid_data_type = "v1119"
+valid_data_type = "v1130"
+if valid_data_type == "org":
+    train_events_path = config.data_dir / "train_events.csv"
+elif valid_data_type == "v1119":
+    train_events_path = pathlib.Path("./input/processed/train_events_v1119.cscv")
+else:
+    train_events_path = pathlib.Path("./input/for_train/train_events_v1130.csv")
+logger.info(f"train_events_path: {train_events_path}")
+
+df_valid_events = pl.read_csv(train_events_path, dtypes={"step": pl.Int64}).drop_nulls()
+df_valid_solution = (
+    df_valid_events.filter(pl.col("series_id").is_in(df_valid_series))
+    .to_pandas(use_pyarrow_extension_array=True)
+    .dropna()
+)
 df_valid_solution = df_valid_solution[~df_valid_solution["step"].isnull()]
 print(df_valid_solution)
 
@@ -157,6 +171,7 @@ submission = Runner(
     dataconfig=configs[args.fold],
     is_val=True,
     device=args.device,
+    valid_data_type=valid_data_type,
 ).run(
     debug=args.debug,
     fold=args.fold,
@@ -183,6 +198,7 @@ score_per_sid = dict()
 for sid in submission["series_id"].unique():
     sub_sid = submission[submission["series_id"] == sid]
     valid_sol_sid = df_valid_solution[df_valid_solution["series_id"] == sid]
+
     if not isinstance(valid_sol_sid, pd.DataFrame):
         sub_sid = sub_sid.to_frame()
     if not isinstance(valid_sol_sid, pd.DataFrame):
@@ -190,6 +206,7 @@ for sid in submission["series_id"].unique():
 
     if sub_sid.empty or valid_sol_sid.empty:
         continue
+
     score_per_sid[sid] = metrics.event_detection_ap(
         valid_sol_sid,
         sub_sid,
@@ -211,7 +228,7 @@ cv_score = metrics.event_detection_ap(
     submission,
 )
 
-print(f"\n CV score: {cv_score}")
+print(f"\n CV score: {cv_score}, ({config.name=},{config.model_save_path=})")
 
 
 ######## Analysis ########
@@ -291,7 +308,7 @@ def _plot_events(
     """
     print(f"features: {features.shape}")
     print(features)
-    fig, ax = plt.subplots(len(features.columns), 1, figsize=figsize)
+    fig, ax = plt.subplots(len(features.columns) + 2, 1, figsize=figsize)
     assert isinstance(ax, np.ndarray)
     assert isinstance(fig, figure.Figure)
 
@@ -307,22 +324,20 @@ def _plot_events(
     # -- Plot events labels
     for event_name, step in zip(events["event"], events["step"]):
         color = "red" if event_name == "onset" else "green"
-        for i in range(len(features.columns)):
-            ax[i].axvline(
-                step, color=color, linestyle="--", label=event_name, alpha=0.5
-            )
+        ax[len(features.columns)].axvline(
+            step, color=color, linestyle="--", label=event_name, alpha=0.5
+        )
 
     # -- Plot preds
     for event_name, step, _ in zip(preds["event"], preds["step"], preds["score"]):
         color = "yellow" if event_name == "onset" else "aqua"
-        for i in range(len(features.columns)):
-            ax[i].axvline(
-                step,
-                color=color,
-                linestyle="--",
-                label="_".join([event_name, "pred"]),
-                alpha=0.5,
-            )
+        ax[len(features.columns) + 1].axvline(
+            step,
+            color=color,
+            linestyle="--",
+            label="_".join([event_name, "pred"]),
+            alpha=0.5,
+        )
 
     for x in ax:
         handles, legends = x.get_legend_handles_labels()

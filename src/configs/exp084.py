@@ -81,7 +81,7 @@ class Config:
     # seq_len: int = 24 * 60 * 20
     # seq_len: int = 24 * 60 * 8
     seq_len: int = 32 * 16 * 20
-    # slide_size: int = seq_len // 2
+    slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20
     # seq_len: int = 32 * 16 * 30
