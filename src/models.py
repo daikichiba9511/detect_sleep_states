@@ -1,4 +1,5 @@
 from typing import Any, Callable, Protocol
+from logging import getLogger
 
 import segmentation_models_pytorch as smp
 import torch
@@ -7,7 +8,10 @@ import torch.nn.functional as F
 import torchaudio.transforms as TAT
 import torchvision.transforms.functional as TF
 
-from src import augmentations, decoders, encoders, feature_extractors
+from src import augmentations, decoders, encoders, feature_extractors, losses
+
+
+logger = getLogger(__name__)
 
 
 class ResidualBiGRU(nn.Module):
@@ -546,6 +550,7 @@ class Spectrogram2DCNN(nn.Module):
         use_custom_encoder: bool = True,
         spec_augment: Callable[[torch.Tensor], torch.Tensor] | None = None,
         decoder_channels: list[int] = [256, 128, 64, 32, 16],
+        loss_type: str = "bce",
     ) -> None:
         super().__init__()
         self.feature_extractor = feature_extractor
@@ -574,6 +579,9 @@ class Spectrogram2DCNN(nn.Module):
         self.use_aux_head = use_aux_head
         if self.use_aux_head:
             self.aux_head = AuxHead(in_feats=5760, out_feats=1)
+
+        self.loss_type = loss_type
+        logger.info(f"loss_type: {self.loss_type}")
 
         # self.mel_spectrogram = nn.Sequential(
         #     # forward: (..., times) -> (n_channels, n_mels, times)
@@ -658,9 +666,13 @@ class Spectrogram2DCNN(nn.Module):
             if sample_weights is None:
                 loss = self.loss_fn(logits, labels)
             else:
-                loff_fn = nn.BCEWithLogitsLoss(reduction="none")
+                if self.loss_type == "bce":
+                    loss_fn = nn.BCEWithLogitsLoss(reduction="none")
+                else:
+                    loss_fn = losses.FocalLoss()
+
                 # (batch_size, pred_len, n_classes)
-                loss = loff_fn(logits, labels)
+                loss = loss_fn(logits, labels)
                 # (batch_size, pred_len)
                 loss = loss.mean(-1)
                 if periodic_mask is not None:
@@ -821,6 +833,7 @@ def build_model(config: ModelConfig) -> torch.nn.Module:
             spec_augment=spec_augment,
             use_aux_head=params.get("use_aux_head", False),
             decoder_channels=params.get("decoder_channels", [256, 128, 64, 32, 16]),
+            loss_type=params.get("loss_type", "bce"),
         )
         return model
 
