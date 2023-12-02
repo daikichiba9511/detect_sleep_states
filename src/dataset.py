@@ -595,6 +595,27 @@ def min_max_normalize(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
     return x
 
 
+def normalize_hour(hour:np.ndarray) -> np.ndarray:
+    hour_norm = hour / 2 + 0.5
+    return hour_norm
+
+
+def normalize_anglez(anglez: np.ndarray) -> np.ndarray:
+    ANGLEZ_MEAN = -8.810476
+    ANGLEZ_STD = 35.521877
+    anglez_orig = (anglez * ANGLEZ_STD) + ANGLEZ_MEAN
+    anglez_norm = (anglez_orig / 180) + 0.5
+    return anglez_norm
+
+
+def normalize_enmo(enmo: np.ndarray) -> np.ndarray:
+    ENMO_MEAN = 0.041315
+    ENMO_STD = 0.101829
+    enmo_orig = (enmo * ENMO_STD) + ENMO_MEAN
+    enmo_norm = (np.clip(enmo_orig, 0, 2)) / 2
+    return enmo_norm
+
+
 class SleepDatasetV3(Dataset):
     def __init__(
         self,
@@ -1039,13 +1060,13 @@ def load_features(
         this_features = []
         for feature_name in feature_names:
             feature = np.load(series_dir / f"{feature_name}.npy").astype(np.float32)
-            if do_min_max_normalize and feature_name in [
-                "anglez",
-                "enmo",
-                "hour_sin",
-                "hour_cos",
-            ]:
-                feature = min_max_normalize(feature, eps=1e-7)
+            if do_min_max_normalize:
+                if feature_name == "enmo":
+                    feature = normalize_enmo(feature)
+                if feature_name == "anglez":
+                    feature = normalize_anglez(feature)
+                if feature_name in ["hour_sin", "hour_cos"]:
+                    feature = normalize_hour(feature)
             this_features.append(feature)
         features[series_id] = np.stack(this_features, axis=1)
     return features
@@ -1073,13 +1094,13 @@ def load_chunk_features(
         this_features = []
         for feature_name in feature_names:
             feature = np.load(series_dir / f"{feature_name}.npy").astype(np.float32)
-            if do_min_max_normalize and feature_name in [
-                "anglez",
-                "enmo",
-                "hour_sin",
-                "hour_cos",
-            ]:
-                feature = min_max_normalize(feature, eps=1e-7)
+            if do_min_max_normalize:
+                if feature_name == "enmo":
+                    feature = normalize_enmo(feature)
+                if feature_name == "anglez":
+                    feature = normalize_anglez(feature)
+                if feature_name in ["hour_sin","hour_cos"]:
+                    feature = normalize_hour(feature)
             this_features.append(feature)
         this_features = np.stack(this_features, axis=1)
 
