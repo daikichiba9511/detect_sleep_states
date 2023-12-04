@@ -29,27 +29,35 @@ parser.add_argument("--all", default=False, action="store_true")
 parser.add_argument("--device", type=str, default="cuda")
 args = parser.parse_args()
 
-config = importlib.import_module(f"src.configs.{args.config}").Config
+dataconfig = importlib.import_module(f"src.configs.{args.config}").Config()
 
 ####### UPDATE PARAMS #######
-config.fold = args.fold
-config.model_save_path = config.output_dir / f"{config.name}_model_fold{args.fold}.pth"
+dataconfig.fold = int(args.fold)
+# dataconfig.train_series = my_utils.load_series(
+#     pathlib.Path("./input/for_train/folded_series_ids_fold5_seed42.json"),
+#     "train_series",
+#     int(args.fold),
+# )
+dataconfig.valid_series = my_utils.load_series(
+    pathlib.Path("./input/for_train/folded_series_ids_fold5_seed42.json"),
+    "valid_series",
+    int(args.fold),
+)
 
-
-logger.info(f"fold: {args.fold}, debug: {args.debug}")
-logger.info(f"\n{pprint.pformat(get_class_vars(config))}")
+logger.info(f"\n{pprint.pformat(get_class_vars(dataconfig))}")
 
 ########## VALID ##########
 # df_valid_series = pl.read_parquet(config.train_series_path).filter(
 #     pl.col("fold") == args.fold
 # )
-df_valid_series = config.valid_series
+logger.info(f"fold: {args.fold}, debug: {args.debug}")
 
-# valid_data_type = "org"
+df_valid_series = dataconfig.valid_series
+valid_data_type = "org"
 # valid_data_type = "v1119"
-valid_data_type = "v1130"
+# valid_data_type = "v1130"
 if valid_data_type == "org":
-    train_events_path = config.data_dir / "train_events.csv"
+    train_events_path = dataconfig.data_dir / "train_events.csv"
 elif valid_data_type == "v1119":
     train_events_path = pathlib.Path("./input/processed/train_events_v1119.cscv")
 else:
@@ -63,25 +71,26 @@ df_valid_solution = (
     .dropna()
 )
 df_valid_solution = df_valid_solution[~df_valid_solution["step"].isnull()]
-print(df_valid_solution)
+
+logger.info(f"df_valid_solution:\n{df_valid_solution}")
 
 configs = []
 
 # 個別のvalidation用
-for fold in range(args.fold + 1):
-    config = importlib.import_module(f"src.configs.{args.config}").Config
-    config_ = config()
-    config_.fold = args.fold
-
-    config_.model_save_path = (
-        # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
-        config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
-    )
-    # config_.slide_size = config_.seq_len // 2
-    # logger.info(
-    #     "model_path: {model_path}".format(model_path=config_.model_save_path)
-    # )
-    configs.append(copy.deepcopy(config_))
+# for fold in range(args.fold + 1):
+#     config = importlib.import_module(f"src.configs.{args.config}").Config
+#     config_ = config()
+#     config_.fold = args.fold
+#
+#     config_.model_save_path = (
+#         # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#         config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
+#     )
+#     # config_.slide_size = config_.seq_len // 2
+#     # logger.info(
+#     #     "model_path: {model_path}".format(model_path=config_.model_save_path)
+#     # )
+#     configs.append(copy.deepcopy(config_))
 
 # -- 074
 # config_ = importlib.import_module("src.configs.exp074").Config
@@ -137,7 +146,7 @@ for fold in range(args.fold + 1):
 # pprint.pprint(get_class_vars(config_))
 # configs.append(config_)
 
-# -- 083
+# -- 083_0_full
 # config_ = importlib.import_module("src.configs.exp083").Config
 # config_.spectrogram2dcnn_params["encoder_weights"] = None
 # config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
@@ -149,26 +158,213 @@ for fold in range(args.fold + 1):
 # )
 # pprint.pprint(get_class_vars(config_))
 # configs.append(config_)
-#
-# # -- 084
-# config_ = importlib.import_module("src.configs.exp084").Config
+
+# -- 083_0
+# config_ = importlib.import_module("src.configs.exp083").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold0.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(config_)
+
+# -- 083_1
+# config_ = importlib.import_module("src.configs.exp083").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold1.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(config_)
+
+# -- 083_2
+# config_ = importlib.import_module("src.configs.exp083").Config
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold2.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(config_)
+
+# # -- 084_0
+# config_ = importlib.import_module("src.configs.exp084").Config()
 # config_.spectrogram2dcnn_params["encoder_weights"] = None
 # config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
 # config_.slide_size = config_.seq_len // 2
 # config_.model_save_path = (
 #     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
-#     # config_.output_dir / f"last_{config_.name}_fold{args.fold}.pth"
-#     config_.output_dir / f"full_{config_.name}_fold0.pth"
+#     config_.output_dir / f"last_{config_.name}_fold0.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(config_)
+#
+# # -- 084_1
+# config_ = importlib.import_module("src.configs.exp084").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.spectrogram2dcnn_params["decoder_channels"] = [256, 128, 64, 32, 16]
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold1.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
 # )
 # pprint.pprint(get_class_vars(config_))
 # configs.append(config_)
 
+# -- 087_0
+# config_ = importlib.import_module("src.configs.exp087").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold0.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+#
+# # -- 087_1
+# config_ = importlib.import_module("src.configs.exp087").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold1.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+#
+# # -- 087_2
+# config_ = importlib.import_module("src.configs.exp087").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold2.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+#
+# # -- 087_3
+# config_ = importlib.import_module("src.configs.exp087").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold3.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+#
+# # -- 087_4
+# config_ = importlib.import_module("src.configs.exp087").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold4.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 088_0
+# config_ = importlib.import_module("src.configs.exp088").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold0.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 088_1
+# config_ = importlib.import_module("src.configs.exp088").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold1.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+#
+# -- 088_2
+# config_ = importlib.import_module("src.configs.exp088").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold2.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# # -- 089_0
+# config_ = importlib.import_module("src.configs.exp089").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     # config_.output_dir / f"last_{config_.name}_fold0.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 089_1
+config_ = importlib.import_module("src.configs.exp089").Config()
+config_.spectrogram2dcnn_params["encoder_weights"] = None
+config_.slide_size = config_.seq_len // 2
+config_.model_save_path = (
+    # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+    config_.output_dir / f"last_{config_.name}_fold1.pth"
+    # config_.output_dir / f"full_{config_.name}_fold0.pth"
+)
+pprint.pprint(get_class_vars(config_))
+configs.append(copy.deepcopy(config_))
+
+# -- 089_2
+# config_ = importlib.import_module("src.configs.exp089").Config()
+# config_.spectrogram2dcnn_params["encoder_weights"] = None
+# config_.slide_size = config_.seq_len // 2
+# config_.model_save_path = (
+#     # config_.output_dir / f"{config_.name}_model_fold{args.fold}.pth"
+#     config_.output_dir / f"last_{config_.name}_fold2.pth"
+#     # config_.output_dir / f"full_{config_.name}_fold0.pth"
+# )
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+
 print(f"len(configs): {len(configs)}")
 
 submission = Runner(
-    configs=[configs[args.fold]],
-    # configs=configs,
-    dataconfig=configs[args.fold],
+    # configs=[configs[args.fold]],
+    # configs=[configs[0], configs[2], configs[3], configs[4]],
+    configs=[
+        # configs[2],
+        # configs[1],
+        *configs
+    ],
+    dataconfig=dataconfig,
     is_val=True,
     device=args.device,
     valid_data_type=valid_data_type,
@@ -177,22 +373,27 @@ submission = Runner(
     fold=args.fold,
 )
 
+
 ########## 周期的な部分の予測の除外 ##########
 logger.info("remove periodic")
-valid_series = configs[args.fold].valid_series
 valid_series = (
-    pl.read_parquet(config.data_dir / "train_series.parquet")
-    .filter(pl.col("series_id").is_in(valid_series))
+    pl.read_parquet(dataconfig.data_dir / "train_series.parquet")
+    .filter(pl.col("series_id").is_in(dataconfig.valid_series))
     .to_pandas(use_pyarrow_extension_array=True)
 )
 valid_periodic_dict = my_utils.create_periodic_dict(valid_series)
 submission = my_utils.remove_periodic(submission, valid_periodic_dict)
+
+########## NMS ##########
+# logger.info("NMS")
+# submission = my_utils.non_maximum_suppression(submission, iou_threshold=100)
 
 print(submission)
 submission.to_csv("submission.csv", index=False)
 
 print(submission["step"].value_counts())
 print(submission["event"].value_counts())
+
 
 score_per_sid = dict()
 for sid in submission["series_id"].unique():
@@ -205,6 +406,7 @@ for sid in submission["series_id"].unique():
         valid_sol_sid = valid_sol_sid.to_frame()
 
     if sub_sid.empty or valid_sol_sid.empty:
+        logger.info(f"empty: {sid}, {sub_sid.shape=}, {valid_sol_sid.shape=}")
         continue
 
     score_per_sid[sid] = metrics.event_detection_ap(
@@ -228,7 +430,7 @@ cv_score = metrics.event_detection_ap(
     submission,
 )
 
-print(f"\n CV score: {cv_score}, ({config.name=},{config.model_save_path=})")
+print(f"\n CV score: {cv_score}, ({dataconfig.name=})")
 
 
 ######## Analysis ########
@@ -248,6 +450,7 @@ def _analysis(
         preds_this_sid = _filter_events(preds, sid)
         fig, _ = _plot_events(features, events_this_sid, preds_this_sid, score)
         _save_fig(fig, f"fold{fold}_events_{sid}.png", save_dir)
+        plt.close("all")
 
 
 def _load_events(events_path: pathlib.Path) -> pl.DataFrame:
@@ -339,7 +542,7 @@ def _plot_events(
             alpha=0.5,
         )
 
-    for x in ax:
+    for x in ax[len(features.columns) :]:
         handles, legends = x.get_legend_handles_labels()
         used_labels = set()
         unique_handles_legends = []
@@ -388,8 +591,8 @@ for sid, _ in sids:
 _analysis(
     preds=pl.DataFrame._from_pandas(submission),
     sids=sids,
-    save_dir=pathlib.Path(f"./output/analysis/{config.name}"),
-    events_path=config.train_events_path,
+    save_dir=pathlib.Path(f"./output/analysis/{dataconfig.name}"),
+    events_path=dataconfig.train_events_path,
     data_dir=pathlib.Path("./input/processed"),
     use_features=["anglez", "enmo", "hour_cos", "hour_sin"],
     fold=int(args.fold),

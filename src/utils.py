@@ -143,7 +143,7 @@ def _slide_concat(chunk_preds: np.ndarray, slide_size: int, offset: int) -> np.n
     """
     n_chunks, chunk_size, n_classes = chunk_preds.shape
     preds = np.zeros((n_chunks * slide_size, n_classes))
-    counts = np.zeros((n_chunks * slide_size, n_classes))
+    counts = np.zeros((n_chunks * slide_size, 1))
     for i in range(n_chunks):
         # start                             end
         # |                                 |
@@ -375,6 +375,26 @@ def remove_periodic(
 
     df_ = df_.query("periodic == 0").drop("periodic", axis=1)
     return df_
+
+
+def non_maximum_suppression(df: pd.DataFrame, iou_threshold: int = 100) -> pd.DataFrame:
+    grouped = df.groupby(["event", "series_id"])
+    nms_predictions = []
+
+    for _, group in grouped:
+        sorted_group = group.sort_values(by="score", ascending=False)
+
+        while not sorted_group.empty:
+            highest = sorted_group.iloc[0]
+            nms_predictions.append(highest)
+            sorted_group = sorted_group[
+                sorted_group["step"].sub(highest["step"]).abs() > iou_threshold
+            ]
+
+    nms_df = (
+        pd.DataFrame(nms_predictions).sort_values(by="row_id").reset_index(drop=True)
+    )
+    return nms_df
 
 
 if __name__ == "__main__":

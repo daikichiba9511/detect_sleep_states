@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp089"
+    name: str = "exp092"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    75+use_corrected_events_v2
+    86+FocalLoss
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -79,7 +79,9 @@ class Config:
     downsample_rate: int = 2
     upsample_rate: float = 1.0
     # seq_len: int = 24 * 60 * 20
-    seq_len: int = 24 * 60 * 8
+    # seq_len: int = 24 * 60 * 8
+    seq_len: int = 32 * 16 * 20
+    slide_size: int = seq_len // 2
     # slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20
@@ -88,9 +90,9 @@ class Config:
     """Trueの場合はSpectrogram2DCNNのforwardでsample_weightsを渡す。null_rateでサンプルの重みづけ"""
     do_sleep_label_smoothing: bool = True
     do_inverse_aug: bool = False
-    use_corrected_events_v2 = True
+    use_corrected_events = True
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
-    do_min_max_normalize: bool = True
+    do_min_max_normalize: bool = False
     """Trueの場合は、min-max正規化を行う。"""
 
     fold: int = 0
@@ -145,4 +147,5 @@ class Config:
             time_mask_param=100,
             freq_mask_param=10,
         ),
+        loss_type="FocalLoss",
     )

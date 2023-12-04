@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp089"
+    name: str = "exp090"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    75+use_corrected_events_v2
+    85+FocalLoss
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -28,9 +28,9 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 4
-    batch_size: int = int(8 * 1)
+    batch_size: int = int(8 * 2)
     num_workers: int = 8 * 1
-    num_grad_accum: int = 32 // batch_size
+    num_grad_accum: int = 2
 
     # Model
     model_type: str = "Spectrogram2DCNN"
@@ -79,8 +79,9 @@ class Config:
     downsample_rate: int = 2
     upsample_rate: float = 1.0
     # seq_len: int = 24 * 60 * 20
-    seq_len: int = 24 * 60 * 8
-    # slide_size: int = seq_len // 2
+    seq_len: int = 32 * 16 * 20
+    # seq_len: int = 24 * 60 * 8
+    slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20
     # seq_len: int = 32 * 16 * 30
@@ -90,7 +91,7 @@ class Config:
     do_inverse_aug: bool = False
     use_corrected_events_v2 = True
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
-    do_min_max_normalize: bool = True
+    do_min_max_normalize: bool = False
     """Trueの場合は、min-max正規化を行う。"""
 
     fold: int = 0
@@ -136,8 +137,7 @@ class Config:
         # encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
         # encoder_name="tf_efficientnet_b0_ns",
         # encoder_name="resnet34",
-        # encoder_name="eca_nfnet_l1",
-        encoder_name="dm_nfnet_f0",
+        encoder_name="eca_nfnet_l1",
         encoder_weights="imagenet",
         use_sample_weights=False,
         use_spec_augment=True,
@@ -145,4 +145,5 @@ class Config:
             time_mask_param=100,
             freq_mask_param=10,
         ),
+        loss_type="FocalLoss",
     )

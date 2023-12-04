@@ -524,6 +524,9 @@ def event_detection_ap(
         gts = ground_truths_grouped.get_group(key).dropna()
         assert isinstance(dets, pd.DataFrame)
         assert isinstance(gts, pd.DataFrame)
+        if len(dets) == 0 or len(gts) == 0:
+            continue
+
         detections_matched.append(
             match_detections(
                 tolerance=dets["tolerance"].iloc[0],

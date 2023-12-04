@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp089"
+    name: str = "exp093"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    75+use_corrected_events_v2
+    89+FocalLoss
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -88,7 +88,7 @@ class Config:
     """Trueの場合はSpectrogram2DCNNのforwardでsample_weightsを渡す。null_rateでサンプルの重みづけ"""
     do_sleep_label_smoothing: bool = True
     do_inverse_aug: bool = False
-    use_corrected_events_v2 = True
+    use_corrected_events_v2 = False
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
     do_min_max_normalize: bool = True
     """Trueの場合は、min-max正規化を行う。"""
@@ -145,4 +145,5 @@ class Config:
             time_mask_param=100,
             freq_mask_param=10,
         ),
+        loss_type="FocalLoss",
     )

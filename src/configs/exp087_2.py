@@ -91,7 +91,7 @@ class Config:
     do_inverse_aug: bool = False
     use_corrected_events_v2 = True
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
-    do_min_max_normalize: bool = False
+    do_min_max_normalize: bool = True
     """Trueの場合は、min-max正規化を行う。"""
 
     fold: int = 0

@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp089"
+    name: str = "exp089_1"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    75+use_corrected_events_v2
+    89-min_max_normalize
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -90,7 +90,7 @@ class Config:
     do_inverse_aug: bool = False
     use_corrected_events_v2 = True
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
-    do_min_max_normalize: bool = True
+    do_min_max_normalize: bool = False
     """Trueの場合は、min-max正規化を行う。"""
 
     fold: int = 0

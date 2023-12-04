@@ -595,7 +595,7 @@ def min_max_normalize(x: np.ndarray, eps: float = 1e-4) -> np.ndarray:
     return x
 
 
-def normalize_hour(hour:np.ndarray) -> np.ndarray:
+def normalize_hour(hour: np.ndarray) -> np.ndarray:
     hour_norm = hour / 2 + 0.5
     return hour_norm
 
@@ -1048,6 +1048,7 @@ def load_features(
     phase: str,
     do_min_max_normalize: bool,
 ) -> dict[str, np.ndarray]:
+    logger.info("Load features with clip normalization %s", do_min_max_normalize)
     features = {}
 
     if series_ids is None:
@@ -1081,6 +1082,7 @@ def load_chunk_features(
     slide_size: int,
     do_min_max_normalize: bool,
 ) -> dict[str, np.ndarray]:
+    logger.info("Load features with clip normalization %s", do_min_max_normalize)
     if series_ids is None:
         series_ids = [
             series_dir.name for series_dir in (processed_dir / phase).glob("*")
@@ -1099,7 +1101,7 @@ def load_chunk_features(
                     feature = normalize_enmo(feature)
                 if feature_name == "anglez":
                     feature = normalize_anglez(feature)
-                if feature_name in ["hour_sin","hour_cos"]:
+                if feature_name in ["hour_sin", "hour_cos"]:
                     feature = normalize_hour(feature)
             this_features.append(feature)
         this_features = np.stack(this_features, axis=1)

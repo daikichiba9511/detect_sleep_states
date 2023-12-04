@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp089"
+    name: str = "exp095"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    75+use_corrected_events_v2
+    88-use_corrected_events_v2-mixup-spec_augment-dropout0.2
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -28,9 +28,9 @@ class Config:
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 4
-    batch_size: int = int(8 * 1)
+    batch_size: int = int(8 * 2)
     num_workers: int = 8 * 1
-    num_grad_accum: int = 32 // batch_size
+    num_grad_accum: int = 2
 
     # Model
     model_type: str = "Spectrogram2DCNN"
@@ -75,12 +75,12 @@ class Config:
     """SleepSegTrainDatasetの__len__で返される値。Noneの場合はlen(series_ids)."""
 
     # Train additional params
-    mixup_prob: float = 0.5
+    mixup_prob: float = 0.0
     downsample_rate: int = 2
     upsample_rate: float = 1.0
     # seq_len: int = 24 * 60 * 20
     seq_len: int = 24 * 60 * 8
-    # slide_size: int = seq_len // 2
+    slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20
     # seq_len: int = 32 * 16 * 30
@@ -88,9 +88,9 @@ class Config:
     """Trueの場合はSpectrogram2DCNNのforwardでsample_weightsを渡す。null_rateでサンプルの重みづけ"""
     do_sleep_label_smoothing: bool = True
     do_inverse_aug: bool = False
-    use_corrected_events_v2 = True
+    use_corrected_events_v2 = False
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
-    do_min_max_normalize: bool = True
+    do_min_max_normalize: bool = False
     """Trueの場合は、min-max正規化を行う。"""
 
     fold: int = 0
@@ -131,16 +131,15 @@ class Config:
         se=False,
         res=False,
         scale_factor=2,
-        dropout=0.2,
+        dropout=0.0,
         # -- Spectrogram2DCNN
         # encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
         # encoder_name="tf_efficientnet_b0_ns",
         # encoder_name="resnet34",
-        # encoder_name="eca_nfnet_l1",
-        encoder_name="dm_nfnet_f0",
+        encoder_name="eca_nfnet_l1",
         encoder_weights="imagenet",
         use_sample_weights=False,
-        use_spec_augment=True,
+        use_spec_augment=False,
         spec_augment_params=dict(
             time_mask_param=100,
             freq_mask_param=10,

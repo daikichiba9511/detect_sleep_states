@@ -6,10 +6,10 @@ from src import utils
 
 
 class Config:
-    name: str = "exp089"
+    name: str = "exp094"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    75+use_corrected_events_v2
+    75+use_corrected_events_v2-mixup-spec_augment-min_max_normalize
     """
 
     root_dir: Path = Path(__file__).resolve().parents[2]
@@ -75,12 +75,12 @@ class Config:
     """SleepSegTrainDatasetの__len__で返される値。Noneの場合はlen(series_ids)."""
 
     # Train additional params
-    mixup_prob: float = 0.5
+    mixup_prob: float = 0.0
     downsample_rate: int = 2
     upsample_rate: float = 1.0
     # seq_len: int = 24 * 60 * 20
-    seq_len: int = 24 * 60 * 8
-    # slide_size: int = seq_len // 2
+    seq_len: int = 32 * 16 * 20
+    slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20
     # seq_len: int = 32 * 16 * 30
@@ -90,7 +90,7 @@ class Config:
     do_inverse_aug: bool = False
     use_corrected_events_v2 = True
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
-    do_min_max_normalize: bool = True
+    do_min_max_normalize: bool = False
     """Trueの場合は、min-max正規化を行う。"""
 
     fold: int = 0
@@ -136,8 +136,8 @@ class Config:
         # encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
         # encoder_name="tf_efficientnet_b0_ns",
         # encoder_name="resnet34",
-        # encoder_name="eca_nfnet_l1",
-        encoder_name="dm_nfnet_f0",
+        encoder_name="eca_nfnet_l1",
+        # encoder_name="dm_nfnet_f0",
         encoder_weights="imagenet",
         use_sample_weights=False,
         use_spec_augment=True,
