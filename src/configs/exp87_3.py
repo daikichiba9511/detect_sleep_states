@@ -1,40 +1,33 @@
 import pathlib
 from pathlib import Path
 from typing import Any
-
 from src import utils
 
 
 class Config:
-    name: str = "exp087_2"
+    name: str = "exp087_3"
     desc: str = """
     wavegram. feature_extractor => encoder => decoder
-    73-min_max_normalize+encoder=maxvit_rmlp_tiny_rw_256.sw_in1k+seq_len=10240-do_inverse_aug+FocalLoss
+    73-min_max_normalize+encoder=maxvit_rmlp_tiny_rw_256.sw_in1k+seq_len=10240-do_inverse_aug
     """
-
     root_dir: Path = Path(__file__).resolve().parents[2]
     input_dir: Path = root_dir / "input"
     data_dir: Path = input_dir / "child-mind-institute-detect-sleep-states"
     output_dir: Path = root_dir / "output" / name
     output_dir.mkdir(exist_ok=True, parents=True)
-
     seed: int = 42
-
     model_save_name = f"{name}_model_fold"
     model_save_path: Path = output_dir / (model_save_name + "0.pth")
     metrics_save_path: Path = output_dir / f"{name}_metrics.csv"
     metrics_plot_path: Path = output_dir / f"{name}_losses.png"
-
     # Train
     use_amp: bool = True
     num_epochs: int = 10 * 4
     batch_size: int = int(8 * 0.5)
     num_workers: int = 8 * 1
     num_grad_accum: int = 32 // batch_size
-
     # Model
     model_type: str = "Spectrogram2DCNN"
-
     # criterion_type: str = "FocalLoss"
     criterion_type: str = "BCEWithLogitsLoss"
     optimizer_params: dict[str, Any] = dict(lr=5e-4, weight_decay=1e-2, eps=1e-4)
@@ -49,9 +42,7 @@ class Config:
     early_stopping_params: dict[str, Any] = dict(
         patience=num_epochs, direction="minimize"
     )
-
     # -- Additional params --
-
     # Used in build_dataloader
     # train_series_path: str | Path = data_dir / "train_series.parquet"
     # train_series_path: str | Path = (
@@ -59,21 +50,16 @@ class Config:
     # )
     # train_events_path: str | Path = data_dir / "train_events.csv"
     # test_series_path: str | Path = data_dir / "test_series.parquet"
-
     train_events_path: str | Path = data_dir / "train_events.csv"
-
     processed_dir: pathlib.Path = input_dir / "processed"
-
     # seq_len: int = 24 * 60 * 4  # num_frames=seq_len//downsample_rate
     # offset: int = 720
     # sigma: int = 110
     offset: int = 100
     sigma: int = 10
     bg_sampling_rate: float = 0.5
-
     sample_per_epoch: int | None = None
     """SleepSegTrainDatasetの__len__で返される値。Noneの場合はlen(series_ids)."""
-
     # Train additional params
     mixup_prob: float = 0.5
     downsample_rate: int = 2
@@ -81,7 +67,7 @@ class Config:
     # seq_len: int = 24 * 60 * 20
     # seq_len: int = 24 * 60 * 8
     seq_len: int = 32 * 16 * 20  # =10240
-    slide_size: int = seq_len // 2
+    # slide_size: int = seq_len // 2
     # """推論時にスライドする大きさ"""
     # seq_len: int = 32 * 16 * 20
     # seq_len: int = 32 * 16 * 30
@@ -93,7 +79,6 @@ class Config:
     """Trueの場合は、補正したラベルを使う。record_state.csvをmake_corrected_events.pyでtrain_events.csvの形状に変換したものを使う。"""
     do_min_max_normalize: bool = True
     """Trueの場合は、min-max正規化を行う。"""
-
     fold: int = 0
     train_series: list[str] = utils.load_series(
         pathlib.Path("./input/for_train/folded_series_ids_fold5_seed42.json"),
@@ -115,7 +100,6 @@ class Config:
         score_thr=0.02,
         distance=90,
     )
-
     spectrogram2dcnn_params: dict[str, Any] = dict(
         downsample_rate=downsample_rate,
         # -- CNNSpectrogram
@@ -133,6 +117,7 @@ class Config:
         res=False,
         scale_factor=2,
         dropout=0.2,
+        loss_type="FocalLoss",
         # -- Spectrogram2DCNN
         encoder_name="maxvit_rmlp_tiny_rw_256.sw_in1k",
         # encoder_name="tf_efficientnet_b0_ns",
@@ -145,5 +130,4 @@ class Config:
             time_mask_param=100,
             freq_mask_param=10,
         ),
-        loss_type="FocalLoss",
     )
