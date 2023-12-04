@@ -129,7 +129,12 @@ configs = []
 
 # -- 087
 # config_ = _init_modelconfig("exp087", 0, "last")
-config_ = _init_modelconfig("exp087", 1, "last")
+# config_ = _init_modelconfig("exp087", 1, "last")
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 087_1
+config_ = _init_modelconfig("exp087_1", 0, "full")
 pprint.pprint(get_class_vars(config_))
 configs.append(copy.deepcopy(config_))
 
