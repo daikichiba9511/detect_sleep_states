@@ -128,10 +128,21 @@ class Runner:
         valid_data_type: str = "org",
     ) -> None:
         self.is_val = is_val
-        self.configs = configs
+        self.configs = [
+            config
+            for config in configs
+            if not getattr(config, "do_min_max_normalize", False)
+        ]
+
         self.dataconfig = dataconfig
         self.device = torch.device(device)
         self.valid_data_type = valid_data_type
+        self.configs_using_clip_normalization = [
+            config
+            for config in configs
+            if getattr(config, "do_min_max_normalize", False)
+        ]
+
         if self.is_val and self.valid_data_type not in [
             "org",
             "v1119",
@@ -170,6 +181,7 @@ class Runner:
 
     def _make_sub_for_seg(
         self,
+        normalized_models: Sequence[nn.Module],
         models: Sequence[nn.Module],
         dl: DataLoader,
         loss_fn: Callable | None,
@@ -184,17 +196,18 @@ class Runner:
         # onset_losses = AverageMeter("onset_loss")
         # wakeup_losses = AverageMeter("wakeup_loss")
         # total_sub = pd.DataFrame()
+        model_num = len(models) + len(normalized_models)
         labels_all = []
         preds = []
         keys = []
 
         pbar = tqdm(enumerate(dl), total=len(dl), dynamic_ncols=True, leave=True)
         with torch.inference_mode(), autocast(use_amp):
-            for _, batch in pbar:
-                x = batch["feature"].to(self.device, non_blocking=True)
+            for i, batch in pbar:
                 keys.extend(batch["key"])
                 logits_this_batch = []
 
+                x = batch["feature"].to(self.device, non_blocking=True)
                 # Make preds for this batch
                 pred_this_batch = torch.zeros((len(x), duration, 3))
                 for model in models:
@@ -208,17 +221,32 @@ class Runner:
                     logits_this_batch.append(logits.detach().cpu().float())
                     pred_this_batch += pred
 
-                pred_this_batch /= len(models)
+                normalized_x = batch["normalized_feature"].to(
+                    self.device, non_blocking=True
+                )
+                for model in normalized_models:
+                    out = model(normalized_x)
+                    # (BS, pred_length, n_class), pred_length = duration // downsample_rate
+                    logits = out["logits"]
+                    pred = logits.detach().cpu().float().sigmoid()
+                    pred = TF.resize(
+                        pred, size=[duration, pred.shape[2]], antialias=False
+                    )
+                    logits_this_batch.append(logits.detach().cpu().float())
+                    pred_this_batch += pred
+
+                pred_this_batch /= model_num
                 preds.append(pred_this_batch)
 
                 # Only for validation
                 if loss_fn is not None and loss_monitor is not None:
+                    model_num = len(models) + len(normalized_models)
                     logits = torch.concat(logits_this_batch, dim=0).reshape(
-                        len(models), x.shape[0], -1, 3
+                        model_num, x.shape[0], -1, 3
                     )
-                    if len(models) != 1 and len(models) == logits.shape[0]:
+                    if model_num != 1 and model_num == logits.shape[0]:
                         logits = logits.mean(dim=0)
-                    if len(models) == 1 and len(models) == logits.shape[0]:
+                    if model_num == 1 and model_num == logits.shape[0]:
                         logits = logits.squeeze(0)
 
                     labels = batch["label"].to(logits.device)
@@ -250,12 +278,18 @@ class Runner:
         debug: bool = False,
         fold: int = 0,
         score_thr: float = 0.02,
-        distance: int = 24 * 60 * 12,
+        distance: int = 90,
+        use_amp: bool = True,
     ) -> pd.DataFrame:
         models = []
         for config in self.configs:
             model = self._init_model(config, config.model_save_path)
             models.append(model)
+
+        normalized_models = []
+        for config in self.configs_using_clip_normalization:
+            model = self._init_model(config, config.model_save_path)
+            normalized_models.append(model)
 
         dl = self._init_dl(debug, fold)
         if self.is_val:
@@ -273,16 +307,17 @@ class Runner:
             # )
             # TODO: durationとかをmodelごとに渡せるようにする, あまり意味ないか？
             outs = self._make_sub_for_seg(
+                normalized_models,
                 models,
                 dl,
                 criterion,
                 losses_meter,
-                use_amp=self.configs[0].use_amp,
-                duration=self.configs[0].seq_len,
-                score_thr=self.configs[0].postprocess_params["score_thr"],
-                distance=self.configs[0].postprocess_params["distance"],
+                use_amp=use_amp,
+                duration=self.dataconfig.seq_len,
+                score_thr=score_thr,
+                distance=distance,
                 slide_size=getattr(
-                    self.configs[0], "slide_size", self.configs[0].seq_len
+                    self.dataconfig, "slide_size", self.dataconfig.seq_len // 2
                 ),
                 # distance=24 * 60 * 8,
             )

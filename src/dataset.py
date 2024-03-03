@@ -1088,6 +1088,7 @@ def load_chunk_features(
             series_dir.name for series_dir in (processed_dir / phase).glob("*")
         ]
 
+    series_ids = sorted(series_ids)
     features = {}
     for series_id in tqdm(series_ids, desc="Load features"):
         series_dir = processed_dir / series_id
@@ -1401,15 +1402,30 @@ class ValidSegDatasetConfig(Protocol):
     features: list[str]
 
 
+def _transformed_feature(
+    feature: np.ndarray, num_features: int, upsampled_num_frames: int
+) -> torch.Tensor:
+    feature_ = torch.FloatTensor(feature.T).unsqueeze(0)
+    feature_ = TF.resize(
+        feature_,
+        size=[num_features, upsampled_num_frames],
+        antialias=False,
+    )
+    feature_ = feature_.squeeze(0)
+    return feature_
+
+
 class SleepSegValidDataset(Dataset):
     def __init__(
         self,
         cfg: ValidSegDatasetConfig,
         chunk_features: dict[str, np.ndarray],
+        normalized_chunk_features: dict[str, np.ndarray],
         df: pl.DataFrame,
     ):
         self.cfg = cfg
         self.chunk_features = chunk_features
+        self.normalized_chunk_features = normalized_chunk_features
         self.keys = list(chunk_features.keys())
         self.event_df = (
             df.pivot(
@@ -1432,15 +1448,14 @@ class SleepSegValidDataset(Dataset):
 
     def __getitem__(self, index: int):
         key = self.keys[index]
-        feature = self.chunk_features[key]
-        # (1, num_features, seq_len)
-        feature = torch.FloatTensor(feature.T).unsqueeze(0)
-        feature = TF.resize(
-            feature,
-            size=[self.num_features, self.upsampled_num_frames],
-            antialias=False,
+        feature = _transformed_feature(
+            self.chunk_features[key], self.num_features, self.upsampled_num_frames
         )
-        feature = feature.squeeze(0)
+        normalized_feature = _transformed_feature(
+            self.normalized_chunk_features[key],
+            self.num_features,
+            self.upsampled_num_frames,
+        )
         series_id, chunk_id = key.split("_")
         chunk_id = int(chunk_id)
         start = chunk_id * self.cfg.seq_len
@@ -1456,6 +1471,7 @@ class SleepSegValidDataset(Dataset):
         return {
             "key": key,
             "feature": feature,  # (num_features, upsampled_num_frames)
+            "normalized_feature": normalized_feature,  # (num_features, upsampled_num_frames)
             "label": torch.FloatTensor(label),  # (seq_len, 3)
         }
 
@@ -1474,10 +1490,14 @@ class TestSegDatasetConfig(Protocol):
 
 class SleepSegTestDataset(Dataset):
     def __init__(
-        self, cfg: TestSegDatasetConfig, chunk_features: dict[str, np.ndarray]
+        self,
+        cfg: TestSegDatasetConfig,
+        chunk_features: dict[str, np.ndarray],
+        normalized_chunk_features: dict[str, np.ndarray],
     ) -> None:
         self.cfg = cfg
         self.chunk_features = chunk_features
+        self.normalized_chunk_features = normalized_chunk_features
         self.keys = list(chunk_features.keys())
         self.num_features = len(cfg.features)
         self.upsampled_num_frames = nearest_valid_size(
@@ -1490,18 +1510,27 @@ class SleepSegTestDataset(Dataset):
     def __getitem__(self, index: int):
         key = self.keys[index]
         features = self.chunk_features[key]
+        normalized_features = self.normalized_chunk_features[key]
         # (1, num_features, seq_len)
         feature = torch.FloatTensor(features.T).unsqueeze(0)
+        normalized_feature = torch.FloatTensor(normalized_features.T).unsqueeze(0)
         feature = TF.resize(
             feature,
             size=[self.num_features, self.upsampled_num_frames],
             antialias=False,
         )
+        normalized_feature = TF.resize(
+            normalized_feature,
+            size=[self.num_features, self.upsampled_num_frames],
+            antialias=False,
+        )
         feature = feature.squeeze(0)
+        normalized_feature = normalized_feature.squeeze(0)
 
         return {
             "key": key,
             "feature": feature,  # (num_features, upsampled_num_frames)
+            "normalized_feature": normalized_feature,  # (num_features, upsampled_num_frames)
         }
 
 
@@ -1553,9 +1582,18 @@ def _init_test_dl(
         processed_dir=processed_dir,
         phase="test",
         slide_size=slide_size,
-        do_min_max_normalize=do_min_max_normalize,
+        do_min_max_normalize=False,
     )
-    ds = SleepSegTestDataset(cfg, chunk_features)
+    normalized_chunk_features = load_chunk_features(
+        seq_len=seq_len,
+        feature_names=features,
+        series_ids=series_ids,
+        processed_dir=processed_dir,
+        phase="test",
+        slide_size=slide_size,
+        do_min_max_normalize=True,
+    )
+    ds = SleepSegTestDataset(cfg, chunk_features, normalized_chunk_features)
     dl = DataLoader(
         ds,
         batch_size=cfg.batch_size,
@@ -1604,10 +1642,21 @@ def _init_valid_dl(
         processed_dir=processed_dir,
         phase="valid",
         slide_size=slide_size,
-        do_min_max_normalize=do_min_max_normalize,
+        do_min_max_normalize=False,
+    )
+    normalized_valid_chunk_features = load_chunk_features(
+        seq_len=seq_len,
+        feature_names=features,
+        series_ids=valid_series,
+        processed_dir=processed_dir,
+        phase="valid",
+        slide_size=slide_size,
+        do_min_max_normalize=True,
     )
     print("Valid", seq_len)
-    ds = SleepSegValidDataset(cfg, valid_chunk_features, valid_event_df)
+    ds = SleepSegValidDataset(
+        cfg, valid_chunk_features, normalized_valid_chunk_features, valid_event_df
+    )
     dl = DataLoader(
         ds,
         batch_size=batch_size,

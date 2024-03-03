@@ -1,26 +1,22 @@
 import importlib
+import pathlib
 import pprint
 import time
 import warnings
 from functools import partial
 from logging import INFO
 
-import pathlib
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.transforms.functional as TF
+from timm import utils as timm_utils
 from torch.cuda.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils import clip_grad
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from timm import utils as timm_utils
-from src import metrics
-from src import models as my_models
 from src import utils
-from src.dataset import mean_std_normalize_label
 from src.tools import AverageMeter, LossFunc, Scheduler, get_lr, train_one_fold
 from src.utils import (
     LoggingUtils,
@@ -154,6 +150,7 @@ def valid_one_epoch_v4(
     seed: int = 42,
     use_amp: bool = False,
     # -- additional params
+    do_clip_normalize: bool = False,
 ) -> dict[str, float | int]:
     seed_everything(seed)
     model = model.to(device).eval()
@@ -173,7 +170,10 @@ def valid_one_epoch_v4(
     for _, batch in pbar:
         with torch.no_grad(), autocast(enabled=use_amp, dtype=torch.float16):
             # (BS, n_features, seq_len)
-            X = batch["feature"].to(device, non_blocking=True)
+            if do_clip_normalize:
+                X = batch["normalized_feature"].to(device, non_blocking=True)
+            else:
+                X = batch["feature"].to(device, non_blocking=True)
             # (BS, seq_len, 3)
             y = batch["label"].to(device, non_blocking=True)
 
@@ -287,7 +287,10 @@ def main(config: str, fold: int, debug: bool, model_compile: bool = False) -> No
             do_sample_weights=getattr(cfg, "do_sample_weights", False),
             do_inverse_aug=getattr(cfg, "do_inverse_aug", False),
         ),
-        valid_one_epoch=partial(valid_one_epoch_v4),
+        valid_one_epoch=partial(
+            valid_one_epoch_v4,
+            do_clip_normalize=getattr(cfg, "do_min_max_normalize", False),
+        ),
         model_compile=model_compile,
         # compile_mode="max-autotune",
         compile_mode="default",

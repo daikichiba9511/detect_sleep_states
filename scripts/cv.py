@@ -12,9 +12,9 @@ import polars as pl
 from matplotlib import axes, figure
 
 from src import metrics
+from src import utils as my_utils
 from src.run import Runner
 from src.utils import LoggingUtils, get_class_vars
-from src import utils as my_utils
 
 logger = LoggingUtils.get_stream_logger(20)
 
@@ -90,7 +90,7 @@ def _init_modelconfig(config_ver: str, fold: int, use_weight: str):
         )
     elif use_weight == "best":
         config_.model_save_path = (
-            config_.output_dir / f"best_{config_.name}_fold{fold}.pth"
+            config_.output_dir / f"{config_.name}_model_fold{fold}.pth"
         )
     else:
         raise ValueError(f"{use_weight=}")
@@ -115,6 +115,18 @@ configs = []
 #     # )
 #     configs.append(copy.deepcopy(config_))
 
+# -- 083
+# config_ = _init_modelconfig("exp083", 0, "last")
+# # config_ = _init_modelconfig("exp083", 1, "last")
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 084
+# config_ = _init_modelconfig("exp084", 0, "last")
+# # config_ = _init_modelconfig("exp083", 1, "last")
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
 # -- 085
 # config_ = _init_modelconfig("exp085", 0, "last")
 # config_ = _init_modelconfig("exp085", 1, "last")
@@ -134,16 +146,21 @@ configs = []
 # configs.append(copy.deepcopy(config_))
 
 # -- 087_1
-config_ = _init_modelconfig("exp087_1", 0, "full")
-pprint.pprint(get_class_vars(config_))
-configs.append(copy.deepcopy(config_))
+# config_ = _init_modelconfig("exp087_1", 0, "full")
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 087_2
+# config_ = _init_modelconfig("exp087_2", 0, "full")
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
 
 # -- 087_3
 # config_ = _init_modelconfig("exp87_3", 0, "last")
-# config_ = _init_modelconfig("exp87_3", 1, "last")
-# config_ = _init_modelconfig("exp87_3", 2, "last")  # 0.0
-# config_ = _init_modelconfig("exp87_3", 3, "last")
-# config_ = _init_modelconfig("exp87_3", 4, "last")
+# # config_ = _init_modelconfig("exp87_3", 1, "last")
+# # config_ = _init_modelconfig("exp87_3", 2, "last")  # 0.0
+# # config_ = _init_modelconfig("exp87_3", 3, "last")
+# # config_ = _init_modelconfig("exp87_3", 4, "last")
 # pprint.pprint(get_class_vars(config_))
 # configs.append(copy.deepcopy(config_))
 
@@ -173,7 +190,7 @@ configs.append(copy.deepcopy(config_))
 
 # -- 092
 # config_ = _init_modelconfig("exp092", 0, "last")
-# config_ = _init_modelconfig("exp092", 1, "last")
+# # config_ = _init_modelconfig("exp092", 1, "last")
 # pprint.pprint(get_class_vars(config_))
 # configs.append(copy.deepcopy(config_))
 
@@ -189,6 +206,29 @@ configs.append(copy.deepcopy(config_))
 # pprint.pprint(get_class_vars(config_))
 # configs.append(copy.deepcopy(config_))
 
+# -- 098
+# config_ = _init_modelconfig("exp098", 0, "last")
+# # config_ = _init_modelconfig("exp094", 1, "last")
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 100
+# config_ = _init_modelconfig("exp100", 0, "last")
+# # config_ = _init_modelconfig("exp100", 1, "last")
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 101
+# config_ = _init_modelconfig("exp101", 0, "last")
+# # # config_ = _init_modelconfig("exp101", 1, "last")
+# pprint.pprint(get_class_vars(config_))
+# configs.append(copy.deepcopy(config_))
+
+# -- 102
+config_ = _init_modelconfig("exp102", 0, "last")
+# # config_ = _init_modelconfig("exp102", 1, "last")
+pprint.pprint(get_class_vars(config_))
+configs.append(copy.deepcopy(config_))
 print(f"len(configs): {len(configs)}")
 
 
@@ -204,10 +244,7 @@ submission = Runner(
     is_val=True,
     device=args.device,
     valid_data_type=valid_data_type,
-).run(
-    debug=args.debug,
-    fold=args.fold,
-)
+).run(debug=args.debug, fold=args.fold, score_thr=0.02, distance=90)
 
 
 ########## 周期的な部分の予測の除外 ##########
@@ -231,7 +268,7 @@ print(submission["step"].value_counts())
 print(submission["event"].value_counts())
 
 
-score_per_sid = dict()
+score_per_sid: dict[str, float] = dict()
 for sid in submission["series_id"].unique():
     sub_sid = submission[submission["series_id"] == sid]
     valid_sol_sid = df_valid_solution[df_valid_solution["series_id"] == sid]
@@ -355,10 +392,10 @@ def _plot_events(
     for i, feature_name in enumerate(features.columns):
         ax[i].plot(features[feature_name])
         ax[i].set_title(feature_name)
-        ax[i].set_xlabel("time")
+        ax[i].set_xlabel("step")
         ax[i].set_ylabel("value")
         ax[i].grid()
-        ax[i].legend()
+        ax[i].set_xlim(0, len(features))
 
     # -- Plot events labels
     for event_name, step in zip(events["event"], events["step"]):
@@ -366,6 +403,8 @@ def _plot_events(
         ax[len(features.columns)].axvline(
             step, color=color, linestyle="-", label=event_name, alpha=0.5
         )
+        ax[len(features.columns)].set_xlim(0, len(features))
+        ax[len(features.columns)].grid()
 
     # -- Plot preds
     for event_name, step, score in zip(preds["event"], preds["step"], preds["score"]):
@@ -380,6 +419,8 @@ def _plot_events(
             label="_".join([event_name, "pred"]),
             alpha=0.5,
         )
+        ax[len(features.columns) + 1].set_xlim(0, len(features))
+        ax[len(features.columns) + 1].grid()
 
     for x in ax[len(features.columns) :]:
         handles, legends = x.get_legend_handles_labels()
@@ -399,7 +440,7 @@ def _plot_events(
 def _save_fig(fig: figure.Figure, save_path: str, save_dir: pathlib.Path) -> None:
     save_path_ = save_dir / save_path
     save_path_.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(save_path_)
+    fig.savefig(str(save_path_))
 
 
 if cv_score > 0.6:

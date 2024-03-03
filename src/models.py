@@ -1,5 +1,5 @@
-from typing import Any, Callable, Protocol
 from logging import getLogger
+from typing import Any, Callable, Protocol
 
 import segmentation_models_pytorch as smp
 import torch
@@ -9,7 +9,6 @@ import torchaudio.transforms as TAT
 import torchvision.transforms.functional as TF
 
 from src import augmentations, decoders, encoders, feature_extractors, losses
-
 
 logger = getLogger(__name__)
 
@@ -549,10 +548,13 @@ class Spectrogram2DCNN(nn.Module):
         use_aux_head: bool = False,
         use_custom_encoder: bool = True,
         spec_augment: Callable[[torch.Tensor], torch.Tensor] | None = None,
-        decoder_channels: list[int] = [256, 128, 64, 32, 16],
+        decoder_channels: list[int] | None = None,
         loss_type: str = "bce",
     ) -> None:
         super().__init__()
+        if decoder_channels is None:
+            decoder_channels = [256, 128, 64, 32, 16]
+
         self.feature_extractor = feature_extractor
         # exp020~049まで
         if use_custom_encoder:
